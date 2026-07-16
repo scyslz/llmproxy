@@ -18,36 +18,45 @@
         th, td { padding: 12px 8px; text-align: left; border-bottom: 1px solid #eee; font-size: 14px; }
         th { color: #7f8c8d; font-weight: 600; }
         button { background: #3498db; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 14px; margin: 2px; }
-        button:hover { background: #2980b9; }
         button.danger { background: #e74c3c; }
         button.danger:hover { background: #c0392b; }
-        button.success { background: #27ae60; }
+        button.success { background: #429464; }
         button.success:hover { background: #229954; }
+        .add-btn { background: #f5f5f5; color: #666; border: 1px solid #ddd; }
+        .add-btn:hover { background: #e8e8e8; color: #333; }
         button.warning { background: #f39c12; }
         button.warning:hover { background: #e67e22; }
-        button.small { padding: 4px 8px; font-size: 12px; }
-        input, select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; margin-bottom: 5px; }
+        button.small { padding: 4px 6px; font-size: 12px; }
+        input { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; margin-bottom: 5px; }
         label { display: block; margin-bottom: 5px; color: #7f8c8d; font-size: 14px; }
         .status { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; }
         .status.enabled { background: #27ae60; }
         .status.disabled { background: #bdc3c7; }
         .empty { color: #95a5a6; text-align: center; padding: 20px; }
-        .actions { display: flex; gap: 8px; flex-wrap: nowrap; white-space: nowrap; overflow-x: auto; }
+        .actions { position: relative; min-width: 40px; }
+        .dropdown-btn { display: inline-block; color: #7f8c8d; padding: 6px 8px; font-size: 20px; cursor: pointer; font-weight: bold; user-select: none; -webkit-tap-highlight-color: transparent; }
+        .dropdown-btn:hover { color: #333; }
+        .dropdown-content { display: none; position: absolute; right: 0; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.15); border-radius: 4px; z-index: 10; overflow: hidden; white-space: nowrap; }
+        .dropdown-content button { display: block; width: 100%; text-align: left; background: none; color: #333; border: none; padding: 8px 12px; cursor: pointer; font-size: 13px; white-space: nowrap; }
+        .dropdown-content button:hover { background: none; color: #000; }
+        .dropdown-content button.danger { color: #e74c3c; }
+        .dropdown-content button.success { color: #27ae60; }
+        .dropdown-content button.warning { color: #f39c12; }
+        .actions.show .dropdown-content { display: block; }
+        .models-cell { max-width: 300px; word-wrap: break-word; }
+        .model-tag { display: inline-block; background: #ecf0f1; color: #7f8c8d; padding: 2px 6px; margin: 2px; border-radius: 3px; font-size: 11px; word-break: break-all; }
+        td:first-child { white-space: nowrap; }
         .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; }
         .modal.show { display: flex; align-items: center; justify-content: center; }
         .modal-content { background: white; padding: 20px; border-radius: 8px; width: 90%; max-width: 500px; }
         .modal-content h3 { margin-bottom: 15px; }
-        .form-row { display: flex; gap: 10px; margin-bottom: 10px; }
-        .form-row > div { flex: 1; }
         @media (max-width: 600px) {
             .container { padding: 10px; }
             h1 { font-size: 20px; }
             .card { padding: 15px; }
             table { font-size: 13px; }
             th, td { padding: 8px 4px; }
-            .actions { flex-direction: column; }
             button { width: 100%; }
-            .form-row { flex-direction: column; }
         }
     </style>
 </head>
@@ -61,28 +70,9 @@
         </div>
 
         <div class="card">
-            <h2>添加 Provider</h2>
-            <div class="form-row">
-                <div>
-                    <label>名称</label>
-                    <input id="p-name" placeholder="DeepSeek">
-                </div>
-                <div>
-                    <label>Base URL</label>
-                    <input id="p-base-url" placeholder="https://api.deepseek.com">
-                </div>
+            <div style="text-align: center; margin-bottom: 15px;">
+                <button class="add-btn" onclick="openAddModal()">+ 添加 Provider</button>
             </div>
-            <div class="form-row">
-                <div>
-                    <label>API Key</label>
-                    <input id="p-api-key" type="password" placeholder="sk-xxx">
-                </div>
-                <div>
-                    <label>Models</label>
-                    <input id="p-models" placeholder="deepseek-chat,deepseek-coder">
-                </div>
-            </div>
-            <button onclick="addProvider()">添加</button>
         </div>
     </div>
 
@@ -97,11 +87,24 @@
             <div><label>Models (逗号分隔)</label><input id="edit-models"></div>
             <div style="margin-top: 15px;">
                 <button onclick="saveEdit()">保存</button>
-                <button onclick="closeModal()">取消</button>
+                <button onclick="closeEditModal()">取消</button>
             </div>
         </div>
     </div>
-
+    <!-- 添加模态框 -->
+    <div id="add-modal" class="modal">
+        <div class="modal-content">
+            <h3>添加 Provider</h3>
+            <div><label>名称</label><input id="add-name" placeholder="DeepSeek"></div>
+            <div><label>Base URL</label><input id="add-base-url" placeholder="https://api.deepseek.com"></div>
+            <div><label>API Key</label><input id="add-api-key" type="password" placeholder="sk-xxx"></div>
+            <div><label>Models (逗号分隔)</label><input id="add-models" placeholder="deepseek-chat,deepseek-coder"></div>
+            <div style="margin-top: 15px;">
+                <button onclick="saveAdd()">添加</button>
+                <button onclick="closeAddModal()">取消</button>
+            </div>
+        </div>
+    </div>
     <script>
         const API = '/api';
 
@@ -115,22 +118,23 @@
                 return;
             }
 
-            let html = `<table><tr><th>状态</th><th>名称</th><th>Models</th><th>操作</th></tr>`;
+            let html = `<table><tr><th>名称</th><th>Models</th><th>操作</th></tr>`;
             data.forEach(p => {
                 const status = p.enabled ? 'enabled' : 'disabled';
-                const enableBtn = p.enabled 
-                    ? '' 
-                    : `<button class="success small" onclick="enableProvider('${p.id}')">启用</button>`;
-                const editBtn = `<button class="warning small" data-id="${p.id}" onclick="openEditModal('${p.id}', '${p.name}', '${p.base_url}', '${p.api_key}', '${p.models.join(',')}')">编辑</button>`;
-                const deleteBtn = p.enabled 
-                    ? '' 
-                    : `<button class="danger small" data-id="${p.id}" onclick="deleteProvider('${p.id}')">删除</button>`;
+                
+                const modelsHtml = p.models.map(m => `<span class="model-tag">${m}</span>`).join('');
                 
                 html += `<tr data-id="${p.id}">
-                    <td><span class="status ${status}"></span></td>
-                    <td>${p.name}</td>
-                    <td>${p.models.join(', ')}</td>
-                    <td class="actions">${enableBtn} ${editBtn} ${deleteBtn}</td>
+                    <td><span class="status ${status}"></span> ${p.name}</td>
+                    <td class="models-cell">${modelsHtml}</td>
+                    <td class="actions">
+                        <span class="dropdown-btn" onclick="toggleDropdown(event, '${p.id}')">⋮</span>
+                        <div class="dropdown-content" id="dropdown-${p.id}">
+                            ${p.enabled ? '' : `<button class="success" onclick="enableProvider('${p.id}'); closeAllDropdowns();">启用</button>`}
+                            <button class="warning" onclick="openEditModal('${p.id}', '${p.name}', '${p.base_url}', '${p.api_key}', '${p.models.join(',')}'); closeAllDropdowns();">编辑</button>
+                            ${p.enabled ? '' : `<button class="danger" onclick="deleteProvider('${p.id}'); closeAllDropdowns();">删除</button>`}
+                        </div>
+                    </td>
                 </tr>`;
             });
             html += '</table>';
@@ -146,8 +150,21 @@
             document.getElementById('edit-modal').classList.add('show');
         }
 
-        function closeModal() {
+        function closeEditModal() {
             document.getElementById('edit-modal').classList.remove('show');
+        }
+
+        function openAddModal() {
+            // 清空表单
+            document.getElementById('add-name').value = '';
+            document.getElementById('add-base-url').value = '';
+            document.getElementById('add-api-key').value = '';
+            document.getElementById('add-models').value = '';
+            document.getElementById('add-modal').classList.add('show');
+        }
+
+        function closeAddModal() {
+            document.getElementById('add-modal').classList.remove('show');
         }
 
         async function saveEdit() {
@@ -157,6 +174,11 @@
             const apiKey = document.getElementById('edit-api-key').value.trim();
             const models = document.getElementById('edit-models').value.split(',').map(m => m.trim()).filter(m => m);
 
+            if (!name || !baseUrl) {
+                alert('请填写名称和 Base URL');
+                return;
+            }
+
             const res = await fetch(`${API}/providers/${id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
@@ -164,21 +186,21 @@
             });
 
             if (res.ok) {
-                closeModal();
+                closeEditModal();
                 loadProviders();
             } else {
                 alert('保存失败');
             }
         }
 
-        async function addProvider() {
-            const name = document.getElementById('p-name').value.trim();
-            const baseUrl = document.getElementById('p-base-url').value.trim();
-            const apiKey = document.getElementById('p-api-key').value.trim();
-            const models = document.getElementById('p-models').value.split(',').map(m => m.trim()).filter(m => m);
+        async function saveAdd() {
+            const name = document.getElementById('add-name').value.trim();
+            const baseUrl = document.getElementById('add-base-url').value.trim();
+            const apiKey = document.getElementById('add-api-key').value.trim();
+            const models = document.getElementById('add-models').value.split(',').map(m => m.trim()).filter(m => m);
 
-            if (!name || !baseUrl || !apiKey) {
-                alert('请填写完整信息');
+            if (!name || !baseUrl) {
+                alert('请填写名称和 Base URL');
                 return;
             }
 
@@ -192,10 +214,7 @@
             });
 
             if (res.ok) {
-                document.getElementById('p-name').value = '';
-                document.getElementById('p-base-url').value = '';
-                document.getElementById('p-api-key').value = '';
-                document.getElementById('p-models').value = '';
+                closeAddModal();
                 loadProviders();
             } else {
                 alert('添加失败');
@@ -212,6 +231,27 @@
             const res = await fetch(`${API}/providers/${id}`, { method: 'DELETE' });
             if (res.ok) loadProviders();
         }
+
+        function toggleDropdown(event, id) {
+            event.stopPropagation();
+            const actionsCell = event.currentTarget.parentElement;
+            const isShown = actionsCell.classList.contains('show');
+            
+            // 关闭所有下拉菜单
+            closeAllDropdowns();
+            
+            // 如果当前不是显示状态，则显示
+            if (!isShown) {
+                actionsCell.classList.add('show');
+            }
+        }
+
+        function closeAllDropdowns() {
+            document.querySelectorAll('.actions.show').forEach(el => el.classList.remove('show'));
+        }
+
+        // 点击其他地方关闭下拉菜单
+        document.addEventListener('click', closeAllDropdowns);
 
         loadProviders();
         setInterval(loadProviders, 5000);
