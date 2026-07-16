@@ -8,6 +8,7 @@ import (
 
 	"llmproxy/config"
 	"llmproxy/handler"
+	"llmproxy/key"
 
 )
 
@@ -31,8 +32,14 @@ func main() {
 		}
 	}
 
+	// 初始化 key store
+	keyStore := key.NewStore(cfg.EnableVirtualKey)
+	for i := range cfg.VirtualKeys {
+		keyStore.Add(&cfg.VirtualKeys[i])
+	}
+
 	// 初始化 handler
-	handler.Init(cfg, providers)
+	handler.Init(cfg, providers, keyStore)
 
 	// 路由
 	http.HandleFunc("/v1/", handler.ForwardHandler) // 通用 handler：POST/PUT 判断 model/stream，GET 直接转发

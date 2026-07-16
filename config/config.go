@@ -32,10 +32,11 @@ type VirtualKey struct {
 
 // Config 配置
 type Config struct {
-	Listen      string      `json:"listen"`
-	Debug       bool        `json:"debug"`
-	Providers   []Provider  `json:"providers"`
-	VirtualKeys []VirtualKey `json:"virtual_keys"`
+	Listen         string      `json:"listen"`
+	Debug          bool        `json:"debug"`
+	EnableVirtualKey bool      `json:"enable_virtual_key"`
+	Providers      []Provider  `json:"providers"`
+	VirtualKeys    []VirtualKey `json:"virtual_keys"`
 }
 
 // Loader 配置加载器

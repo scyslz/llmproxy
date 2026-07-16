@@ -3,27 +3,46 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"strings"
 
 	"llmproxy/config"
+	"llmproxy/key"
 )
 
 var (
 	cfg       *config.Config
 	providers map[string]*config.Provider
+	keyStore  *key.Store
 )
 
 // Init 初始化
-func Init(c *config.Config, ps map[string]*config.Provider) {
+func Init(c *config.Config, ps map[string]*config.Provider, ks *key.Store) {
 	cfg = c
 	providers = ps
+	keyStore = ks
 }
 
 func ForwardHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[ForwardHandler] %s %s", r.Method, r.URL.Path)
+
+	// 验证虚拟密钥（如果启用）
+	if keyStore != nil {
+		apiKey := extractAPIKey(r)
+		if apiKey != "" {
+			providerIDs, err := keyStore.Validate(apiKey)
+			if err != nil {
+				log.Printf("[ForwardHandler] 虚拟密钥验证失败: %v", err)
+				http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), 401)
+				return
+			}
+			log.Printf("[ForwardHandler] 虚拟密钥验证成功，可用 providers: %v", providerIDs)
+			// TODO: 根据虚拟密钥的 providerIDs 选择 provider
+		}
+	}
 
 	// GET：直接转发，不解析 body
 	if r.Method == "GET" {
@@ -226,5 +245,19 @@ func ModelsHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// IndexHandler 在 adminhandler.go 里定义
+// extractAPIKey 从请求中提取 API Key
+func extractAPIKey(r *http.Request) string {
+	// 从 Authorization header 中提取
+	auth := r.Header.Get("Authorization")
+	if auth != "" {
+		// 格式: "Bearer <api_key>"
+		if strings.HasPrefix(auth, "Bearer ") {
+			return strings.TrimPrefix(auth, "Bearer ")
+		}
+		return auth
+	}
+
+	// 可以从其他位置提取，比如查询参数等
+	return ""
+}
 

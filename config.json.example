@@ -1,6 +1,7 @@
 {
   "listen": ":4000",
   "debug": false,
+  "enable_virtual_key": false,
   "providers": [
     {
       "id": "openai",

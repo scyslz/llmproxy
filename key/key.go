@@ -10,14 +10,16 @@ import (
 
 // Store 密钥存储
 type Store struct {
-	keys map[string]*config.VirtualKey
-	mu   sync.RWMutex
+	keys           map[string]*config.VirtualKey
+	mu             sync.RWMutex
+	enableVirtualKey bool
 }
 
 // NewStore 创建存储
-func NewStore() *Store {
+func NewStore(enableVirtualKey bool) *Store {
 	return &Store{
-		keys: make(map[string]*config.VirtualKey),
+		keys:           make(map[string]*config.VirtualKey),
+		enableVirtualKey: enableVirtualKey,
 	}
 }
 
@@ -30,6 +32,11 @@ func (s *Store) Add(k *config.VirtualKey) {
 
 // Validate 验证密钥，返回可用的 provider IDs
 func (s *Store) Validate(keyID string) ([]string, error) {
+	// 如果未启用虚拟密钥功能，直接返回错误
+	if !s.enableVirtualKey {
+		return nil, fmt.Errorf("virtual key feature is disabled")
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
