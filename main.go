@@ -1,7 +1,9 @@
 package main
 
 import (
+	"embed"
 	"encoding/json"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -9,8 +11,10 @@ import (
 	"llmproxy/config"
 	"llmproxy/handler"
 	"llmproxy/key"
-
 )
+
+//go:embed web/*
+var embeddedWeb embed.FS
 
 func main() {
 	// 加载配置
@@ -40,6 +44,10 @@ func main() {
 
 	// 初始化 handler
 	handler.Init(cfg, providers, keyStore)
+
+	// 注入嵌入的 web 目录（交叉编译后无需 web/ 目录）
+	webSub, _ := fs.Sub(embeddedWeb, "web")
+	handler.SetWebFS(webSub)
 
 	// 路由
 	http.HandleFunc("/v1/", handler.ForwardHandler) // 通用 handler：POST/PUT 判断 model/stream，GET 直接转发

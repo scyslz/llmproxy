@@ -2,12 +2,29 @@ package handler
 
 import (
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"os"
 	"strings"
 
 	"llmproxy/config"
 )
+
+// SetWebFS 由 main.go 注入 embed.FS（web 目录内容）
+var webFS fs.FS
+
+func SetWebFS(fsys fs.FS) {
+	webFS = fsys
+}
+
+// webServer 将 webFS 包装为 http.FileServer
+func webServer() http.Handler {
+	if webFS == nil {
+		// fallback：从磁盘读取（开发模式）
+		return http.FileServer(http.Dir("web"))
+	}
+	return http.FileServer(http.FS(webFS))
+}
 
 // ProvidersAPI 处理 /api/providers 管理 API（RESTful）
 // GET  /api/providers          → 列表
@@ -193,9 +210,5 @@ func saveConfig() {
 
 // IndexHandler 返回 Web UI（SPA 模式，所有路径都返回 index.html）
 func IndexHandler(w http.ResponseWriter, r *http.Request) {
-	 socureId := r.URL.Path[1:]
-	if socureId == "" {
-	socureId = "index.html"
-	}
-	 http.ServeFile(w, r, "web/"+socureId)
+	webServer().ServeHTTP(w, r)
 }

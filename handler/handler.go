@@ -29,8 +29,8 @@ func Init(c *config.Config, ps map[string]*config.Provider, ks *key.Store) {
 func ForwardHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[ForwardHandler] %s %s", r.Method, r.URL.Path)
 
-	// 验证虚拟密钥（如果启用）
-	if keyStore != nil {
+	// 验证虚拟密钥（全局启用时才进行验证）
+	if cfg.EnableVirtualKey && keyStore != nil {
 		apiKey := extractAPIKey(r)
 		if apiKey != "" {
 			providerIDs, err := keyStore.Validate(apiKey)
