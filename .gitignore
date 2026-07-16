@@ -1,0 +1,27 @@
+# 二进制文件
+llmproxy
+llmproxy-arm64
+llmproxy.exe
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 配置文件（包含敏感信息）
+config.json
+config.json.bak
+!config.json.example
+
+# Go
+vendor/
+go.sum
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log

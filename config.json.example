@@ -1,0 +1,60 @@
+{
+  "listen": ":4000",
+  "debug": false,
+  "providers": [
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "base_url": "https://api.openai.com/v1",
+      "api_key": "sk-your-openai-api-key-here",
+      "models": [
+        "gpt-3.5-turbo",
+        "gpt-4",
+        "gpt-4-turbo"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "base_url": "https://api.deepseek.com/v1",
+      "api_key": "sk-your-deepseek-api-key-here",
+      "models": [
+        "deepseek-chat",
+        "deepseek-coder"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "cloudbase",
+      "name": "CloudBase AI",
+      "base_url": "https://your-cloudbase-api.com/v1",
+      "api_key": "your-cloudbase-api-key-here",
+      "models": [
+        "hy3-preview"
+      ],
+      "enabled": false
+    }
+  ],
+  "virtual_keys": [
+    {
+      "id": "sk-test-key-001",
+      "provider_ids": [
+        "openai",
+        "deepseek"
+      ],
+      "rate_limit": 100,
+      "enabled": true,
+      "created_at": "2024-01-01T00:00:00Z"
+    },
+    {
+      "id": "sk-test-key-002",
+      "provider_ids": [
+        "deepseek"
+      ],
+      "rate_limit": 0,
+      "enabled": false,
+      "created_at": "2024-01-01T00:00:00Z"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+[Unit]
+Description=llmproxy OpenAI compatible proxy
+After=network.target
+
+[Service]
+Type=simple
+User=hq
+WorkingDirectory=/home/hq/workspace/llmproxy
+ExecStart=/home/hq/workspace/llmproxy/llmproxy
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
