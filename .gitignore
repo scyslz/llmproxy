@@ -1,6 +1,7 @@
 # 二进制文件
 llmproxy
 llmproxy-arm64
+llmproxy-test
 llmproxy.exe
 
 # IDE
