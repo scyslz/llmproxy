@@ -62,7 +62,6 @@ func ForwardHandler(w http.ResponseWriter, r *http.Request) {
 	var providerCfg *config.Provider
 	for _, pp := range providers {
 		if pp.Enabled {
-			log.Printf("[ForwardHandler]  Provider name [%s], baseUrl [%s] ",)
 			providerCfg = pp
 			break
 		}
