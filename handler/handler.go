@@ -44,23 +44,9 @@ func ForwardHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// GET：直接转发，不解析 body
-	if r.Method == "GET" {
-		forwardGet(w, r)
-		return
-	}
-	// POST/PUT：解析 body，判断 model/stream
-	if r.Method != "POST" && r.Method != "PUT" {
-		http.Error(w, `{"error":"method not allowed"}`, 405)
-		return
-	}
 
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		log.Printf("[ForwardHandler] 读取 body 失败: %v", err)
-		http.Error(w, `{"error":"read body failed"}`, 400)
-		return
-	}
+	body, _ := io.ReadAll(r.Body)
+
 
 	// 解析请求，只提取 model/stream，保留其他字段原样
 	// body 为空或不是 JSON 时跳过，直接转发原始 body
@@ -76,15 +62,19 @@ func ForwardHandler(w http.ResponseWriter, r *http.Request) {
 	var providerCfg *config.Provider
 	for _, pp := range providers {
 		if pp.Enabled {
+			log.Printf("[ForwardHandler]  Provider name [%s], baseUrl [%s] ",)
 			providerCfg = pp
 			break
 		}
 	}
+
 	if providerCfg == nil {
 		log.Printf("[ForwardHandler] 没有启用的 provider")
 		http.Error(w, `{"error":"no provider enabled"}`, 503)
 		return
 	}
+
+	log.Printf("[ForwardHandler] Provider: %s(%s)", providerCfg.Name,providerCfg.BaseURL)
 
 	// 替换 model（如果需要）
 	body = resolveModel(raw, body, providerCfg)
@@ -103,7 +93,9 @@ func ForwardHandler(w http.ResponseWriter, r *http.Request) {
 			json.Unmarshal(v, &reqModel)
 		}
 	}
-	log.Printf("[ForwardHandler] %s %s -> %s (provider=%s, model=%s) body: \n %s ", r.Method, r.URL.Path, targetURL, providerCfg.Name, reqModel, string(body))
+	if cfg.Debug {
+		log.Printf("[ForwardHandler] %s %s -> %s (provider=%s, model=%s) body: \n %s ", r.Method, r.URL.Path, targetURL, providerCfg.Name, reqModel, string(body))
+	}
 
 	// 重新构造请求到 targetURL
 	ctx := r.Context()
@@ -182,52 +174,6 @@ func resolveModel(raw map[string]json.RawMessage, body []byte, providerCfg *conf
 		body, _ = json.Marshal(raw)
 	}
 	return body
-}
-
-// forwardGet 处理 GET 请求，直接转发，不解析 body
-func forwardGet(w http.ResponseWriter, r *http.Request) {
-	var providerCfg *config.Provider
-	for _, pp := range providers {
-		if pp.Enabled {
-			providerCfg = pp
-			break
-		}
-	}
-	if providerCfg == nil {
-		log.Printf("[forwardGet] 没有启用的 provider")
-		http.Error(w, `{"error":"no provider enabled"}`, 503)
-		return
-	}
-
-	path := r.URL.Path
-	if idx := strings.Index(path, "/v1"); idx >= 0 {
-		path = path[idx+3:]
-	}
-	targetURL := providerCfg.BaseURL + path
-
-	log.Printf("[forwardGet] GET %s -> %s (provider=%s)", r.URL.Path, targetURL, providerCfg.Name)
-
-	ctx := r.Context()
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
-	if err != nil {
-		log.Printf("[forwardGet] 创建请求失败: %v", err)
-		http.Error(w, `{"error":"create request failed"}`, 500)
-		return
-	}
-	httpReq.Header.Set("Authorization", "Bearer "+providerCfg.APIKey)
-
-	resp, err := http.DefaultClient.Do(httpReq)
-	if err != nil {
-		log.Printf("[forwardGet] 转发失败: %v", err)
-		http.Error(w, `{"error":"provider error: `+err.Error()+`"}`, 502)
-		return
-	}
-	defer resp.Body.Close()
-
-	log.Printf("[forwardGet] 响应: GET %s -> %d", r.URL.Path, resp.StatusCode)
-
-	w.Header().Set("Content-Type", "application/json")
-	io.Copy(w, resp.Body)
 }
 
 // ModelsHandler 处理 /v1/models
