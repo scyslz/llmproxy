@@ -1,0 +1,87 @@
+name: Binary
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            target: x86_64-unknown-linux-gnu
+            binary: llmproxy
+          - platform: linux/arm64
+            target: aarch64-unknown-linux-gnu
+            binary: llmproxy-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend + bundle
+        run: npm run build && npm run build:bundle
+
+      - name: Set up sea-config.json
+        run: |
+          cat > sea-config.json <<'EOF'
+          {
+            "main": "dist/bundle.cjs",
+            "output": "dist/sea-prep.blob",
+            "disableExperimentalSEAWarning": true
+          }
+          EOF
+
+      - name: Build SEA binary (${{ matrix.target }})
+        run: |
+          node --experimental-sea-config sea-config.json
+          cp "$(command -v node)" "dist/${{ matrix.binary }}"
+          npx postject "dist/${{ matrix.binary }}" NODE_SEA_BLOB dist/sea-prep.blob \
+            --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.binary }}
+          path: dist/${{ matrix.binary }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p assets
+          cp llmproxy/llmproxy assets/
+          cp llmproxy-arm64/llmproxy-arm64 assets/
+          gzip -k assets/llmproxy
+          gzip -k assets/llmproxy-arm64
+
+      - name: Upload release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            assets/llmproxy
+            assets/llmproxy-arm64
+            assets/llmproxy.gz
+            assets/llmproxy-arm64.gz

@@ -1,0 +1,6 @@
+{
+  "name": "LLM Proxy Dashboard",
+  "description": "A high-performance OpenAI-compatible proxy and management dashboard to configure providers, manage virtual keys, and proxy requests.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
