@@ -4,6 +4,12 @@ llmproxy-arm64
 llmproxy-test
 llmproxy.exe
 
+# 依赖
+node_modules/
+
+# 构建输出
+dist/
+
 # IDE
 .vscode/
 .idea/
@@ -14,11 +20,21 @@ llmproxy.exe
 # 配置文件（包含敏感信息）
 config.json
 config.json.bak
+config copy.json
 !config.json.example
+.env
+.env.local
+.env.*.local
 
 # Go
 vendor/
 go.sum
+
+# Node/TypeScript
+*.tsbuildinfo
+sea-config.json
+*.blob
+bun.lock
 
 # OS
 .DS_Store
@@ -26,3 +42,7 @@ Thumbs.db
 
 # 日志
 *.log
+logs/
+
+# 测试
+coverage/
