@@ -79,7 +79,7 @@ interface Config {
   keys: VirtualKey[];
 }
 
-const CONFIG_FILE = path.join(process.cwd(), "config.json");
+const CONFIG_FILE = path.join(process.cwd(), "config", "config.json");
 
 // Default Configuration
 const DEFAULT_CONFIG: Config = {
