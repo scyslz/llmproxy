@@ -11,6 +11,7 @@ interface Provider {
   enabled: boolean;
   models: string[];
   concurrency?: number; // 0 or undefined = unlimited
+  timeout?: number; // upstream request timeout in ms, 0 or undefined = no timeout
 }
 
 class Semaphore {
@@ -100,7 +101,8 @@ const DEFAULT_CONFIG: Config = {
       apiKey: process.env.GEMINI_API_KEY || "",
       enabled: true,
       models: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash"],
-      concurrency: 0
+      concurrency: 0,
+      timeout: 120000
     },
     {
       id: "openai",
@@ -109,7 +111,8 @@ const DEFAULT_CONFIG: Config = {
       apiKey: "",
       enabled: false,
       models: ["gpt-4o", "gpt-4o-mini", "o1-mini"],
-      concurrency: 0
+      concurrency: 0,
+      timeout: 120000
     },
     {
       id: "deepseek",
@@ -118,7 +121,8 @@ const DEFAULT_CONFIG: Config = {
       apiKey: "",
       enabled: false,
       models: ["deepseek-chat", "deepseek-reasoner"],
-      concurrency: 0
+      concurrency: 0,
+      timeout: 120000
     }
   ],
   keys: [
@@ -854,6 +858,11 @@ async function startServer() {
       await sem.acquire();
     }
 
+    const controller = new AbortController();
+    let abortReason: "timeout" | "client_close" | null = null;
+    const timeoutMs = provider.timeout || 0;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
     try {
       // Setup headers
       const headers = new Headers();
@@ -862,9 +871,14 @@ async function startServer() {
         headers.set("Authorization", `Bearer ${provider.apiKey}`);
       }
 
-      const controller = new AbortController();
+      timeoutId = timeoutMs > 0 ? setTimeout(() => {
+        abortReason = "timeout";
+        controller.abort();
+      }, timeoutMs) : null;
+
       res.on("close", () => {
         if (!res.writableEnded) {
+          abortReason = "client_close";
           controller.abort();
         }
       });
@@ -875,6 +889,7 @@ async function startServer() {
         body: (method === "POST" || method === "PUT") ? JSON.stringify(reqBody) : undefined,
         signal: controller.signal
       });
+      if (timeoutId) clearTimeout(timeoutId);
 
       addLog("info", `[API Proxy Complete] Status ${response.status} ${response.statusText} (${Date.now() - startTime}ms) -> ${provider.name}`, "proxy");
 
@@ -912,14 +927,25 @@ async function startServer() {
       res.end();
       if (sem) sem.release();
     } catch (error: any) {
+      if (timeoutId) clearTimeout(timeoutId);
       if (error.name === "AbortError") {
+        if (abortReason === "timeout") {
+          addLog("warn", `[API Proxy Timeout] Upstream timeout after ${timeoutMs}ms (${Date.now() - startTime}ms)`, "proxy");
+          if (sem) sem.release();
+          if (!res.headersSent) {
+            res.status(504).json({ error: `Upstream timeout: provider ${provider.name} did not respond within ${timeoutMs}ms` });
+          }
+          return;
+        }
         addLog("warn", `[API Proxy Aborted] Client closed connection (${Date.now() - startTime}ms)`, "proxy");
         if (sem) sem.release();
         return;
       }
       addLog("error", `[API Proxy Error] Forwarding failed: ${error.message} (${Date.now() - startTime}ms)`, "proxy");
       if (sem) sem.release();
-      res.status(502).json({ error: `Provider gateway error: ${error.message}` });
+      if (!res.headersSent) {
+        res.status(502).json({ error: `Provider gateway error: ${error.message}` });
+      }
     }
   });
 
