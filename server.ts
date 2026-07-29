@@ -228,6 +228,11 @@ function readDiskLogs(): any[] {
 // In-memory admin session storage
 const adminSessions = new Set<string>();
 
+// Brute-force protection: track failed login attempts
+const failedLoginAttempts: number[] = [];
+const MAX_FAILED_ATTEMPTS = 5;
+const FAILED_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+
 // Helper function to extract API key or token from Authorization header
 function extractApiKey(authHeader?: string): string {
   if (!authHeader) return "";
@@ -322,14 +327,27 @@ async function startServer() {
     if (!cfg.enableAdminAuth) {
       return res.json({ success: true, token: "no-auth-required", enableAdminAuth: false });
     }
+
+    // Brute-force protection: check failed attempts within window
+    const now = Date.now();
+    while (failedLoginAttempts.length > 0 && failedLoginAttempts[0] < now - FAILED_WINDOW_MS) {
+      failedLoginAttempts.shift();
+    }
+    if (failedLoginAttempts.length >= MAX_FAILED_ATTEMPTS) {
+      addLog("warn", `Login blocked: too many failed attempts (${MAX_FAILED_ATTEMPTS} in 10 minutes). Restart required.`);
+      return res.status(429).json({ error: "Too many failed login attempts. Service restart required." });
+    }
+
     const targetPassword = cfg.adminPassword || "admin";
     if (password === targetPassword) {
+      failedLoginAttempts.length = 0;
       const token = "admin_sk_" + Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
       adminSessions.add(token);
       addLog("info", "Admin login successful.");
       return res.json({ success: true, token, enableAdminAuth: true });
     }
-    addLog("warn", "Failed admin login attempt (invalid password).");
+    failedLoginAttempts.push(now);
+    addLog("warn", `Failed admin login attempt (${failedLoginAttempts.length}/${MAX_FAILED_ATTEMPTS} in 10 minutes).`);
     return res.status(401).json({ error: "Invalid admin password" });
   });
 

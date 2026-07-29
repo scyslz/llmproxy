@@ -4,8 +4,12 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch / Tag / Commit"
+        required: false
+        default: "main"
 
 jobs:
   build:
@@ -81,7 +85,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            assets/llmproxy
-            assets/llmproxy-arm64
             assets/llmproxy.gz
             assets/llmproxy-arm64.gz
