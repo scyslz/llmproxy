@@ -932,7 +932,9 @@ async function startServer() {
         if (abortReason === "timeout") {
           addLog("warn", `[API Proxy Timeout] Upstream timeout after ${timeoutMs}ms (${Date.now() - startTime}ms)`, "proxy");
           if (sem) sem.release();
-          if (!res.headersSent) {
+          if (res.headersSent) {
+            res.destroy(error);
+          } else {
             res.status(504).json({ error: `Upstream timeout: provider ${provider.name} did not respond within ${timeoutMs}ms` });
           }
           return;
@@ -943,7 +945,9 @@ async function startServer() {
       }
       addLog("error", `[API Proxy Error] Forwarding failed: ${error.message} (${Date.now() - startTime}ms)`, "proxy");
       if (sem) sem.release();
-      if (!res.headersSent) {
+      if (res.headersSent) {
+        res.destroy(error);
+      } else {
         res.status(502).json({ error: `Provider gateway error: ${error.message}` });
       }
     }
