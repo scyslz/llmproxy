@@ -1,0 +1,244 @@
+import { useState, useEffect, useCallback } from "react";
+import { RequestLog, RequestLogStats, VirtualKey } from "../types";
+import { Trash2, RefreshCw, Filter, Activity, ArrowDownToLine, ArrowUpFromLine, Database, Cpu } from "lucide-react";
+import { apiFetch } from "../lib/api";
+
+interface RequestLogsProps {
+  virtualKeys: VirtualKey[];
+  onClear: () => void;
+}
+
+export default function RequestLogs({ virtualKeys, onClear }: RequestLogsProps) {
+  const [logs, setLogs] = useState<RequestLog[]>([]);
+  const [stats, setStats] = useState<RequestLogStats | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [keyFilter, setKeyFilter] = useState("");
+  const [modelFilter, setModelFilter] = useState("");
+  const [timeRange, setTimeRange] = useState("all");
+
+  const TIME_RANGES = [
+    { id: "all", label: "All Time" },
+    { id: "15m", label: "Last 15 minutes" },
+    { id: "1h", label: "Last 1 hour" },
+    { id: "6h", label: "Last 6 hours" },
+    { id: "24h", label: "Last 24 hours" },
+    { id: "7d", label: "Last 7 days" },
+    { id: "1mo", label: "Last 1 month" },
+    { id: "today", label: "Today" }
+  ];
+
+  const buildQuery = useCallback(() => {
+    const params = new URLSearchParams();
+    if (keyFilter.trim()) params.set("key", keyFilter.trim());
+    if (modelFilter.trim()) params.set("model", modelFilter.trim());
+    if (timeRange !== "all") {
+      const now = new Date();
+      let from: Date | null = null;
+      if (timeRange === "today") {
+        from = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      } else {
+        const minutes: Record<string, number> = { "15m": 15, "1h": 60, "6h": 360, "24h": 1440, "7d": 10080, "1mo": 43200 };
+        if (minutes[timeRange]) from = new Date(now.getTime() - minutes[timeRange] * 60000);
+      }
+      if (from) params.set("from", from.toISOString());
+    }
+    params.set("limit", "500");
+    return params.toString();
+  }, [keyFilter, modelFilter, timeRange]);
+
+  const fetchLogs = useCallback(async () => {
+    try {
+      const q = buildQuery();
+      const [logsRes, statsRes] = await Promise.all([
+        apiFetch(`/api/request-logs?${q}`),
+        apiFetch(`/api/request-logs/stats?${q}`)
+      ]);
+      if (logsRes.ok) setLogs(await logsRes.json());
+      if (statsRes.ok) setStats(await statsRes.json());
+    } catch {
+      // ignore polling errors
+    }
+  }, [buildQuery]);
+
+  useEffect(() => {
+    fetchLogs();
+  }, [timeRange]);
+
+  const handleApplyFilter = async () => {
+    setLoading(true);
+    await fetchLogs();
+    setLoading(false);
+  };
+
+  const handleRefresh = async () => {
+    await fetchLogs();
+  };
+
+  const handleClear = async () => {
+    onClear();
+    setLogs([]);
+    setStats(null);
+    setTimeout(fetchLogs, 500);
+  };
+
+  const fmtNum = (n: number) => (n || 0).toLocaleString();
+  const fmtTime = (ts: string) =>
+    new Date(ts).toLocaleString([], { year: "2-digit", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+  return (
+    <div className="space-y-4">
+      {/* Filter / control bar */}
+      <div className="bg-white border border-neutral-200 rounded-2xl shadow-sm p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center space-x-2">
+            <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
+              <Activity className="w-4 h-4" />
+            </div>
+            <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-600">Request Filters</h4>
+          </div>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={handleApplyFilter}
+              title="Apply filters & refresh"
+              className="px-2.5 py-1 rounded-lg text-[10px] uppercase font-bold tracking-wider bg-neutral-900 text-white hover:bg-neutral-800 transition-colors cursor-pointer"
+            >
+              {loading ? "..." : "Apply"}
+            </button>
+            <button
+              onClick={handleRefresh}
+              title="Refresh request logs"
+              className="p-1.5 hover:bg-neutral-100 rounded-lg text-neutral-500 hover:text-neutral-800 transition-colors cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={handleClear}
+              title="Clear all request logs"
+              className="p-1.5 hover:bg-red-50 rounded-lg text-red-500 hover:text-red-700 transition-colors cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">Key</label>
+            <select
+              value={keyFilter}
+              onChange={(e) => setKeyFilter(e.target.value)}
+              className="w-full bg-white border border-neutral-200 rounded-lg px-3 py-1.5 text-xs text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400 cursor-pointer"
+            >
+              <option value="">All Keys</option>
+              {virtualKeys.map((k) => (
+                <option key={k.key} value={k.name}>{k.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">Model</label>
+            <input
+              type="text"
+              placeholder="All models"
+              value={modelFilter}
+              onChange={(e) => setModelFilter(e.target.value)}
+              className="w-full bg-white border border-neutral-200 rounded-lg px-3 py-1.5 text-xs text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">Time Range</label>
+            <select
+              value={timeRange}
+              onChange={(e) => setTimeRange(e.target.value)}
+              className="w-full bg-white border border-neutral-200 rounded-lg px-3 py-1.5 text-xs text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400"
+            >
+              {TIME_RANGES.map((r) => (
+                <option key={r.id} value={r.id}>{r.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Stats summary */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        {[
+          { label: "Requests", value: fmtNum(stats?.count || 0), icon: <Activity className="w-4 h-4" />, color: "text-neutral-700 bg-neutral-100" },
+          { label: "Prompt In", value: fmtNum(stats?.promptTokens || 0), icon: <ArrowDownToLine className="w-4 h-4" />, color: "text-blue-700 bg-blue-50" },
+          { label: "Cached Read", value: fmtNum(stats?.cachedTokens || 0), icon: <Database className="w-4 h-4" />, color: "text-violet-700 bg-violet-50" },
+          { label: "Completion Out", value: fmtNum(stats?.completionTokens || 0), icon: <ArrowUpFromLine className="w-4 h-4" />, color: "text-emerald-700 bg-emerald-50" },
+          { label: "Total Tokens", value: fmtNum(stats?.totalTokens || 0), icon: <Cpu className="w-4 h-4" />, color: "text-amber-700 bg-amber-50" }
+        ].map((s) => (
+          <div key={s.label} className="bg-white border border-neutral-200 rounded-2xl shadow-sm p-4">
+            <div className="flex items-center space-x-2">
+              <span className={`p-2 rounded-lg ${s.color}`}>{s.icon}</span>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">{s.label}</span>
+            </div>
+            <p className="mt-2 text-lg font-bold text-neutral-800 font-mono">{s.value}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Log table */}
+      <div className="bg-white border border-neutral-200 rounded-2xl shadow-sm overflow-hidden">
+        <div className="bg-neutral-50 px-5 py-3 border-b border-neutral-200 flex items-center space-x-2">
+          <Filter className="w-3.5 h-3.5 text-neutral-400" />
+          <span className="text-xs font-bold uppercase tracking-wider text-neutral-600">Request Usage Logs</span>
+          <span className="text-[10px] text-neutral-400">({logs.length} shown)</span>
+        </div>
+        {logs.length === 0 ? (
+          <div className="p-10 text-center text-neutral-400 text-xs">
+            No request logs match the current filters. API calls routed through <code className="font-mono bg-neutral-100 px-1 py-0.5 rounded">/v1/*</code> will appear here.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse min-w-[900px]">
+              <thead>
+                <tr className="border-b border-neutral-150 text-[10px] uppercase font-bold tracking-wider text-neutral-400">
+                  <th className="py-3 pl-5 pr-3">Time</th>
+                  <th className="py-3 px-3">Key</th>
+                  <th className="py-3 px-3">Model</th>
+                  <th className="py-3 px-3">Provider</th>
+                  <th className="py-3 px-3 text-right">Prompt In</th>
+                  <th className="py-3 px-3 text-right">Cached</th>
+                  <th className="py-3 px-3 text-right">Completion Out</th>
+                  <th className="py-3 px-3 text-right">Total</th>
+                  <th className="py-3 px-3 text-center">Status</th>
+                  <th className="py-3 pl-3 pr-5 text-right">Duration</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-100 text-xs text-neutral-700">
+                {logs.map((log) => (
+                  <tr key={log.id} className="hover:bg-neutral-50/50 transition-colors align-top">
+                    <td className="py-2.5 pl-5 pr-3 font-mono text-[10px] text-neutral-500 whitespace-nowrap">{fmtTime(log.timestamp)}</td>
+                    <td className="py-2.5 px-3">
+                      <span className="inline-flex items-center space-x-1">
+                        <span className="font-semibold text-neutral-800">{log.keyName || <span className="text-neutral-400 font-normal">—</span>}</span>
+                        {log.keyId && (
+                          <span className="font-mono text-[9px] text-neutral-400" title="Masked API key">{log.keyId}</span>
+                        )}
+                      </span>
+                    </td>
+                    <td className="py-2.5 px-3 font-mono text-[11px] text-blue-700 whitespace-nowrap">{log.model || "—"}</td>
+                    <td className="py-2.5 px-3 text-neutral-600 whitespace-nowrap">{log.provider || "—"}</td>
+                    <td className="py-2.5 px-3 text-right font-mono text-neutral-700">{fmtNum(log.promptTokens)}</td>
+                    <td className="py-2.5 px-3 text-right font-mono text-violet-600">{fmtNum(log.cachedTokens)}</td>
+                    <td className="py-2.5 px-3 text-right font-mono text-emerald-700">{fmtNum(log.completionTokens)}</td>
+                    <td className="py-2.5 px-3 text-right font-mono font-bold text-neutral-800">{fmtNum(log.totalTokens)}</td>
+                    <td className="py-2.5 px-3 text-center">
+                      <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold ${log.status >= 200 && log.status < 300 ? "bg-emerald-100 text-emerald-700" : log.status >= 400 ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>
+                        {log.status || "ERR"}
+                      </span>
+                      {log.stream && <span className="ml-1 text-[9px] text-neutral-400">stream</span>}
+                    </td>
+                    <td className="py-2.5 pl-3 pr-5 text-right font-mono text-neutral-500 whitespace-nowrap">{log.durationMs}ms</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

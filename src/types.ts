@@ -6,6 +6,7 @@ export interface Provider {
   enabled: boolean;
   models: string[];
   concurrency?: number;
+  openaiEndpoint?: string;
 }
 
 export interface VirtualKey {
@@ -29,6 +30,33 @@ export interface LogStatus {
   file2Size: number;
   maxLogSizeMB: number;
   totalLogs: number;
+}
+
+export interface RequestLog {
+  id: string;
+  timestamp: string;
+  keyName: string;
+  keyId: string;
+  model: string;
+  provider: string;
+  path: string;
+  method: string;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  totalTokens: number;
+  status: number;
+  durationMs: number;
+  stream: boolean;
+  error?: string;
+}
+
+export interface RequestLogStats {
+  count: number;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  totalTokens: number;
 }
 
 export interface Settings {

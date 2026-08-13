@@ -52,7 +52,8 @@ export default function ProviderCard({
     baseUrl: "",
     apiKey: "",
     modelsString: "",
-    concurrency: 0
+    concurrency: 0,
+    openaiEndpoint: ""
   });
   const [showApiKeyId, setShowApiKeyId] = useState<string | null>(null);
 
@@ -79,7 +80,9 @@ export default function ProviderCard({
       name: preset.name,
       baseUrl: preset.baseUrl,
       apiKey: "",
-      modelsString: preset.models.join(", ")
+      modelsString: preset.models.join(", "),
+      concurrency: 0,
+      openaiEndpoint: ""
     });
   };
 
@@ -91,7 +94,8 @@ export default function ProviderCard({
       baseUrl: p.baseUrl,
       apiKey: p.apiKey,
       modelsString: p.models.join(", "),
-      concurrency: p.concurrency || 0
+      concurrency: p.concurrency || 0,
+      openaiEndpoint: p.openaiEndpoint || ""
     });
     setIsEditing(p.id);
   };
@@ -104,7 +108,8 @@ export default function ProviderCard({
       baseUrl: "",
       apiKey: "",
       modelsString: "",
-      concurrency: 0
+      concurrency: 0,
+      openaiEndpoint: ""
     });
     setIsEditing("new");
   };
@@ -217,7 +222,8 @@ export default function ProviderCard({
       baseUrl: formData.baseUrl.trim(),
       apiKey: formData.apiKey.trim(),
       models,
-      concurrency: formData.concurrency || 0
+      concurrency: formData.concurrency || 0,
+      openaiEndpoint: formData.openaiEndpoint.trim() || undefined
     };
 
     if (isEditing === "new") {
@@ -308,6 +314,18 @@ export default function ProviderCard({
                 onChange={(e) => setFormData({ ...formData, baseUrl: e.target.value })}
                 className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2 text-sm text-neutral-800 outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 font-mono shadow-2xs"
               />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-neutral-700">Chat Path (optional)</label>
+              <input
+                type="text"
+                placeholder="/chat/completions"
+                value={formData.openaiEndpoint}
+                onChange={(e) => setFormData({ ...formData, openaiEndpoint: e.target.value })}
+                className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2 text-sm text-neutral-800 outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 font-mono shadow-2xs"
+              />
+              <p className="text-[10px] text-neutral-500">Optional. When set, the LLM router forwards to this path (e.g. /chat/completions); otherwise /v1/chat/completions is used.</p>
             </div>
 
             <div className="space-y-1.5">

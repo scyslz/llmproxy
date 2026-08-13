@@ -12,6 +12,7 @@
 - **链路断开传播** — 链路任意节点断开，自动向两端传播断开信号，防止连接挂死
 - **Web 管理面板** — React SPA，管理提供商/密钥、实时日志、API Playground
 - **双文件轮转日志** — 按大小自动轮转，Web UI 实时查看
+- **请求用量日志 (SQLite)** — 记录每次请求的输入/输出/缓存 token、key、模型、耗时，支持按 key 与时间范围过滤
 - **可选管理认证** — 管理后台密码保护
 - **单文件二进制** — Node.js SEA 技术打包，免 Node 环境部署
 
@@ -52,6 +53,7 @@ docker run -d -p 4000:4000 \
   "adminPassword": "admin",
   "debug": false,
   "maxLogSizeMB": 20,
+  "maxRequestLogs": 10000,    // 请求用量日志保留条数（SQLite，超出自动清理最旧记录）
   "providers": [
     {
       "id": "my-provider",

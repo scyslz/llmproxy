@@ -6,13 +6,14 @@ import ProviderCard from "./components/ProviderCard";
 import KeyManager from "./components/KeyManager";
 import Playground from "./components/Playground";
 import TerminalLogs from "./components/TerminalLogs";
+import RequestLogs from "./components/RequestLogs";
 import Login from "./components/Login";
 import SecuritySettings from "./components/SecuritySettings";
 import { apiFetch, setAdminToken } from "./lib/api";
 import { Cpu, Terminal, Shield, Sparkles, CheckCircle2 } from "lucide-react";
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<"providers" | "keys" | "playground" | "logs" | "settings">("providers");
+  const [activeTab, setActiveTab] = useState<"providers" | "keys" | "playground" | "logs" | "requestlogs" | "settings">("providers");
   const [enableAdminAuth, setEnableAdminAuth] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   
@@ -27,6 +28,8 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isPollingLogs, setIsPollingLogs] = useState(true);
+  const [playgroundKey, setPlaygroundKey] = useState("");
+  const [playgroundModel, setPlaygroundModel] = useState("");
 
   // Listen for unauthorized events
   useEffect(() => {
@@ -245,7 +248,21 @@ export default function App() {
     }
   };
 
+  const handleClearRequestLogs = async () => {
+    try {
+      await apiFetch("/api/request-logs/clear", { method: "POST" });
+    } catch (e) {
+      // ignore
+    }
+  };
+
   const activeProviderName = providers.find((p) => p.enabled)?.name || "No Active Router";
+
+  // Generated curl command reflects the playground selections; the proxy path is always /v1/chat/completions
+  const proxyOrigin = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
+  const curlEndpoint = `${proxyOrigin}/v1/chat/completions`;
+  const curlKey = enableVirtualKey ? (playgroundKey || "YOUR_VIRTUAL_KEY") : "ANY_KEY";
+  const curlModel = playgroundModel || "any-supported-model";
 
   if (isLoading) {
     return (
@@ -351,7 +368,7 @@ export default function App() {
               </div>
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
                 <div className="lg:col-span-2">
-                  <Playground virtualKeys={virtualKeys} activeProviderName={activeProviderName} enableVirtualKey={enableVirtualKey} />
+                  <Playground virtualKeys={virtualKeys} activeProviderName={activeProviderName} enableVirtualKey={enableVirtualKey} onStateChange={(key, model) => { setPlaygroundKey(key); setPlaygroundModel(model); }} />
                 </div>
                 <div className="bg-white border border-neutral-200 rounded-2xl p-5 shadow-sm space-y-3.5">
                   <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-600 flex items-center space-x-1.5">
@@ -364,16 +381,16 @@ export default function App() {
                   <div className="bg-slate-50 p-4 rounded-xl font-mono text-[11px] text-slate-800 space-y-2 overflow-x-auto border border-slate-200 select-all">
                     <div className="text-slate-400">// Shell/Curl integration example</div>
                     <div>
-                      curl <span className="text-neutral-900 font-semibold">http://localhost:3000/v1/chat/completions</span> \
+                      curl <span className="text-neutral-900 font-semibold">{curlEndpoint}</span> \
                     </div>
                     <div className="pl-2">
-                      -H <span className="text-amber-700">"Authorization: Bearer {enableVirtualKey ? (virtualKeys[0]?.key || "YOUR_VIRTUAL_KEY") : "ANY_KEY"}"</span> \
+                      -H <span className="text-amber-700">"Authorization: Bearer {curlKey}"</span> \
                     </div>
                     <div className="pl-2">
                       -H <span className="text-amber-700">"Content-Type: application/json"</span> \
                     </div>
                     <div className="pl-2">-d '{"{"}</div>
-                    <div className="pl-4">"model": "any-supported-model",</div>
+                    <div className="pl-4">"model": "{curlModel}",</div>
                     <div className="pl-4">"messages": [{"{"}"role": "user", "content": "Hello!"{"}"}]</div>
                     <div className="pl-2">{"}"}'</div>
                   </div>
@@ -402,6 +419,23 @@ export default function App() {
                 isPolling={isPollingLogs}
                 setIsPolling={setIsPollingLogs}
               />
+            </motion.div>
+          )}
+
+          {activeTab === "requestlogs" && (
+            <motion.div
+              key="requestlogs"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              transition={{ duration: 0.15 }}
+              className="space-y-6"
+            >
+              <div>
+                <h3 className="font-display font-semibold text-neutral-800 text-base">Request Usage</h3>
+                <p className="text-xs text-neutral-500">Per-request token usage (prompt / cached / completion), key and model attribution, filterable by key and time range</p>
+              </div>
+              <RequestLogs virtualKeys={virtualKeys} onClear={handleClearRequestLogs} />
             </motion.div>
           )}
 

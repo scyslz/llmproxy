@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
+import { DatabaseSync } from "node:sqlite";
 
 interface Provider {
   id: string;
@@ -12,6 +13,7 @@ interface Provider {
   models: string[];
   concurrency?: number; // 0 or undefined = unlimited
   timeout?: number; // upstream request timeout in ms, 0 or undefined = no timeout
+  openaiEndpoint?: string; // optional path (e.g. /chat/completions), preferred over derived /v1 + subpath
 }
 
 class Semaphore {
@@ -66,6 +68,25 @@ interface VirtualKey {
   createdAt: string;
 }
 
+interface RequestLog {
+  id: string;
+  timestamp: string;
+  keyName: string;
+  keyId: string;
+  model: string;
+  provider: string;
+  path: string;
+  method: string;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  totalTokens: number;
+  status: number;
+  durationMs: number;
+  stream: boolean;
+  error?: string;
+}
+
 interface Config {
   listen?: string;
   enableVirtualKey: boolean;
@@ -75,6 +96,7 @@ interface Config {
   logRequestBody?: boolean;
   logResponseBody?: boolean;
   maxLogSizeMB?: number;
+  maxRequestLogs?: number;
   activeLogFile?: number;
   providers: Provider[];
   keys: VirtualKey[];
@@ -92,6 +114,7 @@ const DEFAULT_CONFIG: Config = {
   logRequestBody: true,
   logResponseBody: false,
   maxLogSizeMB: 2,
+  maxRequestLogs: 10000,
   activeLogFile: 1,
   providers: [
     {
@@ -229,6 +252,146 @@ function readDiskLogs(): any[] {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Request logs (SQLite-backed): captures per-request token usage, key & model
+// ---------------------------------------------------------------------------
+const REQUEST_DB_FILE = path.join(LOGS_DIR, "requests.db");
+let db: DatabaseSync | null = null;
+let requestLogsCount = 0;
+
+function initRequestLogDb() {
+  try {
+    ensureLogDir();
+    db = new DatabaseSync(REQUEST_DB_FILE);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS request_logs (
+        id TEXT PRIMARY KEY,
+        time INTEGER NOT NULL,
+        key_name TEXT,
+        key_id TEXT,
+        model TEXT,
+        provider TEXT,
+        path TEXT,
+        method TEXT,
+        prompt_tokens INTEGER NOT NULL DEFAULT 0,
+        completion_tokens INTEGER NOT NULL DEFAULT 0,
+        cached_tokens INTEGER NOT NULL DEFAULT 0,
+        total_tokens INTEGER NOT NULL DEFAULT 0,
+        status INTEGER NOT NULL DEFAULT 0,
+        duration_ms INTEGER NOT NULL DEFAULT 0,
+        stream INTEGER NOT NULL DEFAULT 0,
+        error TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_req_time ON request_logs(time);
+      CREATE INDEX IF NOT EXISTS idx_req_key ON request_logs(key_name);
+      CREATE INDEX IF NOT EXISTS idx_req_model ON request_logs(model);
+    `);
+    const row = db.prepare("SELECT COUNT(*) AS c FROM request_logs").get() as any;
+    requestLogsCount = row ? row.c : 0;
+    addLog("info", `Request log database ready at ${REQUEST_DB_FILE} (${requestLogsCount} existing entries).`);
+  } catch (err: any) {
+    console.error("Failed to initialize request log database:", err);
+    db = null;
+  }
+}
+
+function maskKey(key: string): string {
+  if (!key) return "";
+  if (key.length <= 8) return key;
+  return `${key.substring(0, 8)}****${key.substring(key.length - 4)}`;
+}
+
+function addRequestLog(log: RequestLog) {
+  if (!db) return;
+  try {
+    const insert = db.prepare(`
+      INSERT INTO request_logs
+        (id, time, key_name, key_id, model, provider, path, method,
+         prompt_tokens, completion_tokens, cached_tokens, total_tokens,
+         status, duration_ms, stream, error)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    insert.run(
+      log.id,
+      new Date(log.timestamp).getTime(),
+      log.keyName || null,
+      log.keyId || null,
+      log.model || null,
+      log.provider || null,
+      log.path || null,
+      log.method || null,
+      log.promptTokens || 0,
+      log.completionTokens || 0,
+      log.cachedTokens || 0,
+      log.totalTokens || 0,
+      log.status || 0,
+      log.durationMs || 0,
+      log.stream ? 1 : 0,
+      log.error || null
+    );
+    requestLogsCount++;
+    const max = (typeof cfg !== "undefined" && cfg?.maxRequestLogs) ? cfg.maxRequestLogs : 10000;
+    if (requestLogsCount > max) {
+      const excess = requestLogsCount - max;
+      db.prepare("DELETE FROM request_logs WHERE id IN (SELECT id FROM request_logs ORDER BY time ASC LIMIT ?)").run(excess);
+      requestLogsCount = max;
+    }
+  } catch (err) {
+    console.error("Failed to write request log:", err);
+  }
+}
+
+function dbRowToRequestLog(row: any): RequestLog {
+  return {
+    id: row.id,
+    timestamp: new Date(row.time).toISOString(),
+    keyName: row.key_name || "",
+    keyId: row.key_id || "",
+    model: row.model || "",
+    provider: row.provider || "",
+    path: row.path || "",
+    method: row.method || "",
+    promptTokens: row.prompt_tokens || 0,
+    completionTokens: row.completion_tokens || 0,
+    cachedTokens: row.cached_tokens || 0,
+    totalTokens: row.total_tokens || 0,
+    status: row.status || 0,
+    durationMs: row.duration_ms || 0,
+    stream: row.stream === 1,
+    error: row.error || undefined
+  };
+}
+
+// Incremental SSE parser that captures model + usage from streaming chunks
+class SseUsageParser {
+  private buffer = "";
+  usage: { promptTokens: number; completionTokens: number; cachedTokens: number } | null = null;
+  model = "";
+
+  push(text: string) {
+    this.buffer += text;
+    let idx: number;
+    while ((idx = this.buffer.indexOf("\n")) >= 0) {
+      const line = this.buffer.substring(0, idx).trim();
+      this.buffer = this.buffer.substring(idx + 1);
+      if (!line.startsWith("data:")) continue;
+      const data = line.substring(5).trim();
+      if (!data || data === "[DONE]") continue;
+      try {
+        const obj = JSON.parse(data);
+        if (obj.model) this.model = obj.model;
+        if (obj.usage) {
+          this.usage = {
+            promptTokens: obj.usage.prompt_tokens ?? 0,
+            completionTokens: obj.usage.completion_tokens ?? 0,
+            cachedTokens: obj.usage.prompt_tokens_details?.cached_tokens ?? 0
+          };
+        }
+      } catch {}
+    }
+  }
+}
+
 // In-memory admin session storage
 const adminSessions = new Set<string>();
 
@@ -270,7 +433,8 @@ function loadConfig(): Config {
           apiKey: p.apiKey || p.api_key || p.APIKey || "",
           enabled: typeof p.enabled === "boolean" ? p.enabled : p.Enabled || false,
           models: p.models || p.Models || [],
-          concurrency: typeof p.concurrency === "number" ? p.concurrency : 0
+          concurrency: typeof p.concurrency === "number" ? p.concurrency : 0,
+          openaiEndpoint: p.openaiEndpoint || p.openai_endpoint || ""
         };
         if (mapped.id === "gemini" && !mapped.apiKey && process.env.GEMINI_API_KEY) {
           mapped.apiKey = process.env.GEMINI_API_KEY;
@@ -298,6 +462,7 @@ let cfg = loadConfig();
 
 async function startServer() {
   const app = express();
+  initRequestLogDb();
 
   let host = "0.0.0.0";
   let port = 3000;
@@ -406,7 +571,8 @@ async function startServer() {
       apiKey: p.apiKey || "",
       enabled: false,
       models: p.models || [],
-      concurrency: typeof p.concurrency === "number" ? p.concurrency : 0
+      concurrency: typeof p.concurrency === "number" ? p.concurrency : 0,
+      openaiEndpoint: p.openaiEndpoint || ""
     };
     cfg.providers.push(newProvider);
     saveConfig(cfg);
@@ -586,6 +752,7 @@ async function startServer() {
       logRequestBody: cfg.logRequestBody !== undefined ? cfg.logRequestBody : true,
       logResponseBody: cfg.logResponseBody === true,
       maxLogSizeMB: cfg.maxLogSizeMB || 2,
+      maxRequestLogs: cfg.maxRequestLogs || 10000,
       activeLogFile: cfg.activeLogFile || 1
     });
   });
@@ -618,6 +785,9 @@ async function startServer() {
     if (typeof req.body.maxLogSizeMB === "number" && req.body.maxLogSizeMB > 0) {
       cfg.maxLogSizeMB = req.body.maxLogSizeMB;
     }
+    if (typeof req.body.maxRequestLogs === "number" && req.body.maxRequestLogs > 0) {
+      cfg.maxRequestLogs = req.body.maxRequestLogs;
+    }
     saveConfig(cfg);
     addLog("info", `Settings updated: enableVirtualKey=${cfg.enableVirtualKey}, enableAdminAuth=${cfg.enableAdminAuth}, debug=${cfg.debug}, logRequestBody=${cfg.logRequestBody}, logResponseBody=${cfg.logResponseBody}, maxLogSizeMB=${cfg.maxLogSizeMB}`, "system");
     res.json({
@@ -627,6 +797,7 @@ async function startServer() {
       logRequestBody: cfg.logRequestBody !== undefined ? cfg.logRequestBody : true,
       logResponseBody: cfg.logResponseBody === true,
       maxLogSizeMB: cfg.maxLogSizeMB || 2,
+      maxRequestLogs: cfg.maxRequestLogs || 10000,
       activeLogFile: cfg.activeLogFile || 1
     });
   });
@@ -721,6 +892,65 @@ async function startServer() {
     saveConfig(cfg);
     addLog("info", `Manual log rotation triggered. Active log file switched to proxy-${nextFileNum}.log`, "system");
     res.json({ success: true, activeFile: nextFileNum });
+  });
+
+  // Request logs API (SQLite-backed usage tracking)
+  const buildRequestLogFilters = (q: any) => {
+    const clauses: string[] = [];
+    const params: any[] = [];
+    if (q.key) { clauses.push("key_name LIKE ?"); params.push(`%${q.key}%`); }
+    if (q.model) { clauses.push("model LIKE ?"); params.push(`%${q.model}%`); }
+    if (q.from) { clauses.push("time >= ?"); params.push(new Date(q.from).getTime()); }
+    if (q.to) { clauses.push("time <= ?"); params.push(new Date(q.to).getTime()); }
+    return { clauses, params };
+  };
+
+  app.get("/api/request-logs", (req, res) => {
+    if (!db) return res.json([]);
+    const q = req.query as any;
+    const { clauses, params } = buildRequestLogFilters(q);
+    let sql = "SELECT * FROM request_logs";
+    if (clauses.length > 0) sql += " WHERE " + clauses.join(" AND ");
+    sql += " ORDER BY time DESC LIMIT ?";
+    const limit = Math.min(parseInt(q.limit, 10) || 500, 1000);
+    params.push(limit);
+    try {
+      const rows = db.prepare(sql).all(...params) as any[];
+      res.json(rows.map(dbRowToRequestLog));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/request-logs/stats", (req, res) => {
+    if (!db) return res.json({ count: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalTokens: 0 });
+    const q = req.query as any;
+    const { clauses, params } = buildRequestLogFilters(q);
+    let sql = `
+      SELECT COUNT(*) AS count,
+             COALESCE(SUM(prompt_tokens), 0) AS promptTokens,
+             COALESCE(SUM(completion_tokens), 0) AS completionTokens,
+             COALESCE(SUM(cached_tokens), 0) AS cachedTokens,
+             COALESCE(SUM(total_tokens), 0) AS totalTokens
+      FROM request_logs`;
+    if (clauses.length > 0) sql += " WHERE " + clauses.join(" AND ");
+    try {
+      const row = db.prepare(sql).get(...params) as any;
+      res.json(row);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/request-logs/clear", (req, res) => {
+    try {
+      if (db) {
+        db.prepare("DELETE FROM request_logs").run();
+        requestLogsCount = 0;
+      }
+    } catch {}
+    addLog("info", "All request usage logs cleared.", "system");
+    res.json({ success: true });
   });
 
   // 4. Models handler (/v1/models)
@@ -838,7 +1068,12 @@ async function startServer() {
     const idx = originalPath.indexOf("/v1");
     const subPath = idx >= 0 ? originalPath.substring(idx + 3) : originalPath;
     const cleanSubPath = subPath.startsWith("/") ? subPath : `/${subPath}`;
-    const targetUrl = `${endpointBase}${cleanSubPath}`;
+
+    // Prefer the configured OpenAI endpoint path (e.g. /chat/completions) when set
+    const configuredEp = provider.openaiEndpoint?.trim();
+    const targetUrl = configuredEp
+      ? `${cleanBaseUrl}${configuredEp.startsWith("/") ? configuredEp : `/${configuredEp}`}`
+      : `${endpointBase}${cleanSubPath}`;
 
     addLog(
       "info",
@@ -902,10 +1137,13 @@ async function startServer() {
         }
       });
 
-      // Handle stream or full body
+      // Handle stream or full body, capturing token usage from the response
+      const isStream = (response.headers.get("content-type") || "").includes("text/event-stream");
       const shouldLogRes = cfg.logResponseBody === true;
       let resBodyBuffer = "";
-      const decoder = shouldLogRes ? new TextDecoder("utf-8") : null;
+      const decoder = new TextDecoder("utf-8");
+      const usageParser = new SseUsageParser();
+      let nonStreamBody = "";
 
       if (response.body) {
         const reader = response.body.getReader();
@@ -913,8 +1151,14 @@ async function startServer() {
           const { done, value } = await reader.read();
           if (done) break;
           res.write(value);
-          if (shouldLogRes && decoder && value) {
-            resBodyBuffer += decoder.decode(value, { stream: true });
+          const text = decoder.decode(value, { stream: true });
+          if (isStream) {
+            usageParser.push(text);
+          } else {
+            nonStreamBody += text;
+          }
+          if (shouldLogRes) {
+            resBodyBuffer += text;
             if (resBodyBuffer.length > 50000) {
               resBodyBuffer = resBodyBuffer.substring(0, 50000) + "... [truncated]";
             }
@@ -926,11 +1170,66 @@ async function startServer() {
       }
       res.end();
       if (sem) sem.release();
+
+      // Extract usage (prompt/completion/cached tokens) and resolved model
+      let promptTokens = 0, completionTokens = 0, cachedTokens = 0, totalTokens = 0;
+      let resModel = reqModel;
+      if (isStream) {
+        promptTokens = usageParser.usage?.promptTokens ?? 0;
+        completionTokens = usageParser.usage?.completionTokens ?? 0;
+        cachedTokens = usageParser.usage?.cachedTokens ?? 0;
+        if (usageParser.model) resModel = usageParser.model;
+      } else {
+        try {
+          const json = JSON.parse(nonStreamBody);
+          const usage = json?.usage;
+          if (usage) {
+            promptTokens = usage.prompt_tokens ?? 0;
+            completionTokens = usage.completion_tokens ?? 0;
+            cachedTokens = usage.prompt_tokens_details?.cached_tokens ?? 0;
+          }
+          if (json?.model) resModel = json.model;
+        } catch {}
+      }
+      totalTokens = promptTokens + completionTokens;
+
+      addRequestLog({
+        id: crypto.randomUUID(),
+        timestamp: new Date().toISOString(),
+        keyName: virtualKeyUsed,
+        keyId: maskKey(apiKey),
+        model: resModel,
+        provider: provider.name,
+        path: originalPath,
+        method,
+        promptTokens,
+        completionTokens,
+        cachedTokens,
+        totalTokens,
+        status: response.status,
+        durationMs: Date.now() - startTime,
+        stream: isStream
+      });
     } catch (error: any) {
       if (timeoutId) clearTimeout(timeoutId);
       if (error.name === "AbortError") {
         if (abortReason === "timeout") {
           addLog("warn", `[API Proxy Timeout] Upstream timeout after ${timeoutMs}ms (${Date.now() - startTime}ms)`, "proxy");
+          addRequestLog({
+            id: crypto.randomUUID(),
+            timestamp: new Date().toISOString(),
+            keyName: virtualKeyUsed,
+            keyId: maskKey(apiKey),
+            model: reqModel,
+            provider: provider.name,
+            path: originalPath,
+            method,
+            promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalTokens: 0,
+            status: 504,
+            durationMs: Date.now() - startTime,
+            stream: false,
+            error: "upstream timeout"
+          });
           if (sem) sem.release();
           if (res.headersSent) {
             res.destroy(error);
@@ -940,10 +1239,40 @@ async function startServer() {
           return;
         }
         addLog("warn", `[API Proxy Aborted] Client closed connection (${Date.now() - startTime}ms)`, "proxy");
+        addRequestLog({
+          id: crypto.randomUUID(),
+          timestamp: new Date().toISOString(),
+          keyName: virtualKeyUsed,
+          keyId: maskKey(apiKey),
+          model: reqModel,
+          provider: provider.name,
+          path: originalPath,
+          method,
+          promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalTokens: 0,
+          status: 0,
+          durationMs: Date.now() - startTime,
+          stream: false,
+          error: "client closed connection"
+        });
         if (sem) sem.release();
         return;
       }
       addLog("error", `[API Proxy Error] Forwarding failed: ${error.message} (${Date.now() - startTime}ms)`, "proxy");
+      addRequestLog({
+        id: crypto.randomUUID(),
+        timestamp: new Date().toISOString(),
+        keyName: virtualKeyUsed,
+        keyId: maskKey(apiKey),
+        model: reqModel,
+        provider: provider.name,
+        path: originalPath,
+        method,
+        promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalTokens: 0,
+        status: 502,
+        durationMs: Date.now() - startTime,
+        stream: false,
+        error: error.message
+      });
       if (sem) sem.release();
       if (res.headersSent) {
         res.destroy(error);

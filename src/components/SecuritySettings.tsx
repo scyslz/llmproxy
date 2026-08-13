@@ -106,7 +106,7 @@ export default function SecuritySettings({
       setLogActionLoading(true);
       await apiFetch("/api/logs/clear", { method: "POST" });
       setSuccessMsg("All system and proxy logs have been cleared.");
-      await fetchLogStatus();
+      await fetchLogStatusAndSettings();
     } catch (err: any) {
       setErrorMsg(err.message || "Failed to clear logs");
     } finally {

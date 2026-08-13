@@ -1,13 +1,13 @@
 import { Provider, VirtualKey } from "../types";
-import { Cpu, ShieldCheck, ShieldAlert, Layers, Terminal, Play, Radio, Lock } from "lucide-react";
+import { Cpu, ShieldCheck, ShieldAlert, Layers, Terminal, Play, Radio, Lock, Activity } from "lucide-react";
 
 interface HeaderProps {
   providers: Provider[];
   virtualKeys: VirtualKey[];
   enableVirtualKey: boolean;
   enableAdminAuth?: boolean;
-  activeTab: "providers" | "keys" | "playground" | "logs" | "settings";
-  setActiveTab: (tab: "providers" | "keys" | "playground" | "logs" | "settings") => void;
+  activeTab: "providers" | "keys" | "playground" | "logs" | "requestlogs" | "settings";
+  setActiveTab: (tab: "providers" | "keys" | "playground" | "logs" | "requestlogs" | "settings") => void;
 }
 
 export default function Header({
@@ -84,6 +84,7 @@ export default function Header({
             { id: "keys", label: "Virtual Keys", icon: <ShieldCheck className="w-4 h-4" /> },
             { id: "playground", label: "Playground", icon: <Play className="w-4 h-4" /> },
             { id: "logs", label: "System Logs", icon: <Terminal className="w-4 h-4" /> },
+            { id: "requestlogs", label: "Usage", icon: <Activity className="w-4 h-4" /> },
             { id: "settings", label: "Security", icon: <Lock className="w-4 h-4" /> }
           ] as const).map((tab) => {
             const isSelected = activeTab === tab.id;

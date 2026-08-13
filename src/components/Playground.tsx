@@ -6,9 +6,10 @@ interface PlaygroundProps {
   virtualKeys: VirtualKey[];
   activeProviderName: string;
   enableVirtualKey?: boolean;
+  onStateChange?: (key: string, model: string) => void;
 }
 
-export default function Playground({ virtualKeys, activeProviderName, enableVirtualKey }: PlaygroundProps) {
+export default function Playground({ virtualKeys, activeProviderName, enableVirtualKey, onStateChange }: PlaygroundProps) {
   const [messages, setMessages] = useState<Message[]>([
     { role: "system", content: "You are a helpful assistant talking through the LLM Proxy." }
   ]);
@@ -62,6 +63,11 @@ export default function Playground({ virtualKeys, activeProviderName, enableVirt
   useEffect(() => {
     fetchModels();
   }, [selectedKey, activeProviderName, virtualKeys.length]);
+
+  // Report selected key/model up to App for the generated curl command
+  useEffect(() => {
+    onStateChange?.(selectedKey, selectedModel);
+  }, [selectedKey, selectedModel]);
 
   // Scroll to bottom on new messages
   useEffect(() => {
