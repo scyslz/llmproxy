@@ -41,7 +41,15 @@ docker build -t llmproxy .
 docker run -d -p 4000:4000 \
   -v $PWD/config/config.json:/app/config/config.json \
   llmproxy
+
+# Docker Compose
+docker compose up -d
+
+# 停止
+docker compose down
 ```
+
+Docker Compose 直接使用镜像 `scyslz/llmproxy`，无需本地构建。容器内的配置目录为 `/app/config`（挂载宿主机的 `config/`），日志与 SQLite 请求用量数据位于 `/app/logs`，`compose.yaml` 已自动将这两个目录挂载到宿主机，配置修改后重启生效：`docker compose restart`。
 
 ## 配置
 
@@ -112,8 +120,9 @@ docker run -d -p 4000:4000 \
 ├── config/
 │   └── config.json           # 运行配置（不在 git 中）
 ├── config.json.example       # 配置示例
-├── logs/                     # 轮转日志
+├── logs/                     # 轮转日志与 SQLite 请求用量数据
 ├── Dockerfile
+├── compose.yaml              # Docker Compose 编排
 └── vite.config.ts
 ```
 
