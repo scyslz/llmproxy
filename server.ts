@@ -913,9 +913,10 @@ async function startServer() {
     const { clauses, params } = buildRequestLogFilters(q);
     let sql = "SELECT * FROM request_logs";
     if (clauses.length > 0) sql += " WHERE " + clauses.join(" AND ");
-    sql += " ORDER BY time DESC LIMIT ?";
     const limit = Math.min(parseInt(q.limit, 10) || 500, 1000);
-    params.push(limit);
+    const offset = Math.max(parseInt(q.offset, 10) || 0, 0);
+    sql += " ORDER BY time DESC LIMIT ? OFFSET ?";
+    params.push(limit, offset);
     try {
       const rows = db.prepare(sql).all(...params) as any[];
       res.json(rows.map(dbRowToRequestLog));

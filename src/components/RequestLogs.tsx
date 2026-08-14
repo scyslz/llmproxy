@@ -15,6 +15,8 @@ export default function RequestLogs({ virtualKeys, onClear }: RequestLogsProps) 
   const [keyFilter, setKeyFilter] = useState("");
   const [modelFilter, setModelFilter] = useState("");
   const [timeRange, setTimeRange] = useState("all");
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 20;
 
   const TIME_RANGES = [
     { id: "all", label: "All Time" },
@@ -27,7 +29,7 @@ export default function RequestLogs({ virtualKeys, onClear }: RequestLogsProps) 
     { id: "today", label: "Today" }
   ];
 
-  const buildQuery = useCallback(() => {
+  const buildQuery = useCallback((p: number) => {
     const params = new URLSearchParams();
     if (keyFilter.trim()) params.set("key", keyFilter.trim());
     if (modelFilter.trim()) params.set("model", modelFilter.trim());
@@ -42,13 +44,14 @@ export default function RequestLogs({ virtualKeys, onClear }: RequestLogsProps) 
       }
       if (from) params.set("from", from.toISOString());
     }
-    params.set("limit", "500");
+    params.set("limit", String(PAGE_SIZE));
+    if (p > 1) params.set("offset", String((p - 1) * PAGE_SIZE));
     return params.toString();
   }, [keyFilter, modelFilter, timeRange]);
 
-  const fetchLogs = useCallback(async () => {
+  const fetchLogs = useCallback(async (p: number) => {
     try {
-      const q = buildQuery();
+      const q = buildQuery(p);
       const [logsRes, statsRes] = await Promise.all([
         apiFetch(`/api/request-logs?${q}`),
         apiFetch(`/api/request-logs/stats?${q}`)
@@ -61,27 +64,35 @@ export default function RequestLogs({ virtualKeys, onClear }: RequestLogsProps) 
   }, [buildQuery]);
 
   useEffect(() => {
-    fetchLogs();
-  }, [timeRange]);
+    fetchLogs(page);
+  }, [timeRange, page]);
 
   const handleApplyFilter = async () => {
     setLoading(true);
-    await fetchLogs();
+    setPage(1);
+    await fetchLogs(1);
     setLoading(false);
   };
 
   const handleRefresh = async () => {
-    await fetchLogs();
+    await fetchLogs(page);
   };
 
   const handleClear = async () => {
     onClear();
     setLogs([]);
     setStats(null);
-    setTimeout(fetchLogs, 500);
+    setTimeout(() => fetchLogs(1), 500);
   };
 
   const fmtNum = (n: number) => (n || 0).toLocaleString();
+  const fmtCompact = (n: number) => {
+    const v = n || 0;
+    if (v >= 1e9) return (v / 1e9).toFixed(2).replace(/\.?0+$/, "") + "G";
+    if (v >= 1e6) return (v / 1e6).toFixed(2).replace(/\.?0+$/, "") + "M";
+    if (v >= 1e3) return (v / 1e3).toFixed(2).replace(/\.?0+$/, "") + "K";
+    return String(v);
+  };
   const fmtTime = (ts: string) =>
     new Date(ts).toLocaleString([], { year: "2-digit", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
@@ -149,7 +160,7 @@ export default function RequestLogs({ virtualKeys, onClear }: RequestLogsProps) 
             <label className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">Time Range</label>
             <select
               value={timeRange}
-              onChange={(e) => setTimeRange(e.target.value)}
+              onChange={(e) => { setTimeRange(e.target.value); setPage(1); }}
               className="w-full bg-white border border-neutral-200 rounded-lg px-3 py-1.5 text-xs text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400"
             >
               {TIME_RANGES.map((r) => (
@@ -163,11 +174,11 @@ export default function RequestLogs({ virtualKeys, onClear }: RequestLogsProps) 
       {/* Stats summary */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         {[
-          { label: "Requests", value: fmtNum(stats?.count || 0), icon: <Activity className="w-4 h-4" />, color: "text-neutral-700 bg-neutral-100" },
-          { label: "Prompt In", value: fmtNum(stats?.promptTokens || 0), icon: <ArrowDownToLine className="w-4 h-4" />, color: "text-blue-700 bg-blue-50" },
-          { label: "Cached Read", value: fmtNum(stats?.cachedTokens || 0), icon: <Database className="w-4 h-4" />, color: "text-violet-700 bg-violet-50" },
-          { label: "Completion Out", value: fmtNum(stats?.completionTokens || 0), icon: <ArrowUpFromLine className="w-4 h-4" />, color: "text-emerald-700 bg-emerald-50" },
-          { label: "Total Tokens", value: fmtNum(stats?.totalTokens || 0), icon: <Cpu className="w-4 h-4" />, color: "text-amber-700 bg-amber-50" }
+          { label: "Requests", value: fmtCompact(stats?.count || 0), icon: <Activity className="w-4 h-4" />, color: "text-neutral-700 bg-neutral-100" },
+          { label: "Prompt In", value: fmtCompact(stats?.promptTokens || 0), icon: <ArrowDownToLine className="w-4 h-4" />, color: "text-blue-700 bg-blue-50" },
+          { label: "Cached Read", value: fmtCompact(stats?.cachedTokens || 0), icon: <Database className="w-4 h-4" />, color: "text-violet-700 bg-violet-50" },
+          { label: "Completion Out", value: fmtCompact(stats?.completionTokens || 0), icon: <ArrowUpFromLine className="w-4 h-4" />, color: "text-emerald-700 bg-emerald-50" },
+          { label: "Total Tokens", value: fmtCompact(stats?.totalTokens || 0), icon: <Cpu className="w-4 h-4" />, color: "text-amber-700 bg-amber-50" }
         ].map((s) => (
           <div key={s.label} className="bg-white border border-neutral-200 rounded-2xl shadow-sm p-4">
             <div className="flex items-center space-x-2">
@@ -184,7 +195,7 @@ export default function RequestLogs({ virtualKeys, onClear }: RequestLogsProps) 
         <div className="bg-neutral-50 px-5 py-3 border-b border-neutral-200 flex items-center space-x-2">
           <Filter className="w-3.5 h-3.5 text-neutral-400" />
           <span className="text-xs font-bold uppercase tracking-wider text-neutral-600">Request Usage Logs</span>
-          <span className="text-[10px] text-neutral-400">({logs.length} shown)</span>
+          <span className="text-[10px] text-neutral-400">({stats?.count || 0} total · page {page} of {Math.max(1, Math.ceil((stats?.count || 0) / PAGE_SIZE))})</span>
         </div>
         {logs.length === 0 ? (
           <div className="p-10 text-center text-neutral-400 text-xs">
@@ -236,6 +247,49 @@ export default function RequestLogs({ virtualKeys, onClear }: RequestLogsProps) 
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+        {Math.ceil((stats?.count || 0) / PAGE_SIZE) > 1 && (
+          <div className="px-5 py-3 border-t border-neutral-200 flex items-center justify-between">
+            <span className="text-[10px] text-neutral-400">
+              Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, stats?.count || 0)} of {stats?.count || 0}
+            </span>
+            <div className="flex items-center space-x-1">
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1}
+                className="px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider bg-neutral-900 text-white hover:bg-neutral-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                Prev
+              </button>
+              {Array.from({ length: Math.ceil((stats?.count || 0) / PAGE_SIZE) }, (_, i) => i + 1)
+                .filter((p) => p === 1 || p === Math.ceil((stats?.count || 0) / PAGE_SIZE) || Math.abs(p - page) <= 1)
+                .reduce<number[]>((acc, p) => {
+                  if (acc.length && p - acc[acc.length - 1] > 1) acc.push(NaN);
+                  acc.push(p);
+                  return acc;
+                }, [])
+                .map((p, i) =>
+                  Number.isNaN(p) ? (
+                    <span key={`ellipsis-${i}`} className="px-1 text-[10px] text-neutral-400">…</span>
+                  ) : (
+                    <button
+                      key={p}
+                      onClick={() => setPage(p)}
+                      className={`w-6 h-6 rounded-lg text-[10px] font-bold transition-colors cursor-pointer ${p === page ? "bg-neutral-900 text-white" : "text-neutral-500 hover:bg-neutral-100"}`}
+                    >
+                      {p}
+                    </button>
+                  )
+                )}
+              <button
+                onClick={() => setPage((p) => p + 1)}
+                disabled={page >= Math.ceil((stats?.count || 0) / PAGE_SIZE)}
+                className="px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider bg-neutral-900 text-white hover:bg-neutral-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+              >
+                Next
+              </button>
+            </div>
           </div>
         )}
       </div>
