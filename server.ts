@@ -213,9 +213,10 @@ function addLog(
   try {
     if (!sysDb) initSystemLogDb();
     if (sysDb) {
-      sysDb.prepare(
+      const stmt = sysLogInsertStmt || (sysLogInsertStmt = sysDb.prepare(
         "INSERT INTO system_logs (time, level, category, file, message) VALUES (?, ?, ?, ?, ?)"
-      ).run(new Date(timestamp).getTime(), level, category || null, logEntry.file || null, message);
+      ));
+      stmt.run(new Date(timestamp).getTime(), level, category || null, logEntry.file || null, message);
       const row = sysDb.prepare("SELECT COUNT(*) AS c FROM system_logs").get() as any;
       const count = row ? row.c : 0;
       if (count > SYSTEM_LOG_LIMIT) {
@@ -280,6 +281,7 @@ const SYSTEM_DB_FILE_1 = path.join(LOGS_DIR, "system_logs.db");
 const SYSTEM_DB_FILE_2 = path.join(LOGS_DIR, "system_logs-2.db");
 const SYSTEM_LOG_LIMIT = 50000;
 let sysDb: DatabaseSync | null = null;
+let sysLogInsertStmt: any = null;
 
 function getSystemDbPath(num: number): string {
   return num === 2 ? SYSTEM_DB_FILE_2 : SYSTEM_DB_FILE_1;
@@ -320,6 +322,8 @@ function openSystemLogDb(num: number) {
   try {
     ensureLogDir();
     if (sysDb) { try { sysDb.close(); } catch {} }
+    sysDb = null;
+    sysLogInsertStmt = null;
     sysDb = new DatabaseSync(getSystemDbPath(num));
     sysDb.exec(`
       CREATE TABLE IF NOT EXISTS system_logs (
@@ -362,6 +366,7 @@ function rotateLogStorage() {
     // Rotate SQLite file
     if (sysDb) { try { sysDb.close(); } catch {} }
     sysDb = null;
+    sysLogInsertStmt = null;
     const nextDbPath = getSystemDbPath(nextNum);
     if (fs.existsSync(nextDbPath)) fs.writeFileSync(nextDbPath, "", "utf-8");
     if (typeof cfg !== "undefined" && cfg) {
@@ -975,7 +980,7 @@ async function startServer() {
   // 3. System Logs API (for Live dashboard logs)
   app.get("/api/logs", (req, res) => {
     const q = req.query as any;
-    const limit = Math.min(parseInt(q.limit, 10) || 500, 1000);
+    const limit = Math.min(parseInt(q.limit, 10) || 15, 500);
     const clauses: string[] = [];
     const params: any[] = [];
     const sinceId = parseInt(q.since, 10);
@@ -1265,6 +1270,12 @@ async function startServer() {
     );
 
     const shouldLogReq = cfg.logRequestBody !== undefined ? cfg.logRequestBody : cfg.debug;
+    if (cfg.debug) {
+      const reqHeaders = Object.entries(req.headers)
+        .map(([k, v]) => `${k}: ${k.toLowerCase() === "authorization" ? "[redacted]" : v}`)
+        .join(" | ");
+      addLog("info", `[API Proxy Request Headers] ${reqHeaders}`, "proxy");
+    }
     if (shouldLogReq && (method === "POST" || method === "PUT")) {
       addLog("info", `[API Proxy Request Body] ${JSON.stringify(reqBody)}`, "proxy");
     }
@@ -1342,13 +1353,17 @@ async function startServer() {
           }
           if (shouldLogRes) {
             resBodyBuffer += text;
-            if (resBodyBuffer.length > 50000) {
-              resBodyBuffer = resBodyBuffer.substring(0, 50000) + "... [truncated]";
-            }
           }
         }
         if (shouldLogRes && resBodyBuffer) {
           addLog("info", `[API Proxy Response Body] ${resBodyBuffer}`, "proxy");
+        }
+        if (cfg.debug) {
+          const respHeaders: string[] = [];
+          response.headers.forEach((value, key) => {
+            if (key.toLowerCase() !== "set-cookie") respHeaders.push(`${key}: ${value}`);
+          });
+          addLog("info", `[API Proxy Response Headers] ${respHeaders.join(" | ")}`, "proxy");
         }
       }
       res.end();

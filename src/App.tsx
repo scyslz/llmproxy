@@ -34,7 +34,7 @@ export default function App() {
 
   const fetchSystemLogs = useCallback(async () => {
     try {
-      const res = await apiFetch("/api/logs?limit=500");
+      const res = await apiFetch("/api/logs?limit=15");
       if (res.ok) {
         const data = await res.json();
         const logsData = Array.isArray(data) ? data : data?.logs ?? [];
@@ -74,7 +74,7 @@ export default function App() {
         apiFetch("/api/providers"),
         apiFetch("/api/keys"),
         apiFetch("/api/settings"),
-        apiFetch("/api/logs?limit=500")
+        apiFetch("/api/logs?limit=15")
       ]);
 
       if (!provRes.ok || !keyRes.ok || !setRes.ok || !logRes.ok) {
@@ -106,7 +106,8 @@ export default function App() {
     fetchData();
   }, []);
 
-  // Poll server logs
+  // Poll server logs: fetch incrementally since the last seen id.
+  // Total stored logs are bounded by backend maxLogSizeMB rotation, not by page limits.
   useEffect(() => {
     if (!isPollingLogs || (enableAdminAuth && isAuthenticated === false)) return;
 
