@@ -18,6 +18,7 @@ export interface VirtualKey {
 }
 
 export interface SystemLog {
+  id?: number;
   timestamp: string;
   level: "info" | "warn" | "error";
   category?: "system" | "proxy";

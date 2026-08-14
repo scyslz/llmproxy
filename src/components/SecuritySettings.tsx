@@ -42,12 +42,14 @@ export default function SecuritySettings({
   const [logRequestBody, setLogRequestBody] = useState<boolean>(true);
   const [logResponseBody, setLogResponseBody] = useState<boolean>(false);
   const [customSizeInput, setCustomSizeInput] = useState<string>("");
+  const [requestLogCount, setRequestLogCount] = useState<number | null>(null);
 
   const fetchLogStatusAndSettings = async () => {
     try {
-      const [statusRes, setRes] = await Promise.all([
+      const [statusRes, setRes, reqStatsRes] = await Promise.all([
         apiFetch("/api/logs/status"),
-        apiFetch("/api/settings")
+        apiFetch("/api/settings"),
+        apiFetch("/api/request-logs/stats").catch(() => null)
       ]);
       const statusData = await statusRes.json();
       setLogStatus(statusData);
@@ -56,6 +58,10 @@ export default function SecuritySettings({
         const setData = await setRes.json();
         setLogRequestBody(setData.logRequestBody !== undefined ? setData.logRequestBody : true);
         setLogResponseBody(setData.logResponseBody === true);
+      }
+      if (reqStatsRes && reqStatsRes.ok) {
+        const statsData = await reqStatsRes.json();
+        setRequestLogCount(statsData.count ?? null);
       }
     } catch {}
   };
@@ -109,6 +115,20 @@ export default function SecuritySettings({
       await fetchLogStatusAndSettings();
     } catch (err: any) {
       setErrorMsg(err.message || "Failed to clear logs");
+    } finally {
+      setLogActionLoading(false);
+    }
+  };
+
+  const handleClearRequestLogs = async () => {
+    if (!window.confirm("Are you sure you want to clear all request usage logs?")) return;
+    try {
+      setLogActionLoading(true);
+      await apiFetch("/api/request-logs/clear", { method: "POST" });
+      setRequestLogCount(0);
+      setSuccessMsg("All request usage logs have been cleared.");
+    } catch (err: any) {
+      setErrorMsg(err.message || "Failed to clear request usage logs");
     } finally {
       setLogActionLoading(false);
     }
@@ -453,6 +473,20 @@ export default function SecuritySettings({
             </div>
 
             <div className="flex items-center justify-end space-x-3 pt-2 border-t border-neutral-100">
+              {requestLogCount !== null && (
+                <span className="text-[11px] text-neutral-500 mr-auto">
+                  {requestLogCount.toLocaleString()} request usage record{requestLogCount === 1 ? "" : "s"}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={handleClearRequestLogs}
+                disabled={logActionLoading}
+                className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Clear Usage Logs</span>
+              </button>
               <button
                 type="button"
                 onClick={handleClearLogs}

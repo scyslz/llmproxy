@@ -182,7 +182,7 @@ function addLog(
   category: "system" | "proxy" = "system"
 ) {
   const timestamp = new Date().toISOString();
-  const activeNum = (typeof cfg !== "undefined" && cfg?.activeLogFile) ? cfg.activeLogFile : 1;
+  let activeNum = (typeof cfg !== "undefined" && cfg?.activeLogFile) ? cfg.activeLogFile : 1;
   const logEntry = { timestamp, level, category, file: activeNum, message };
 
   systemLogs.push(logEntry);
@@ -191,35 +191,54 @@ function addLog(
   }
   console.log(`[${level.toUpperCase()}] [${category.toUpperCase()}] ${message}`);
 
-  // Dual-file round-robin (cyclic) disk rotation
+  // Unified size check: rotate BOTH the JSON and SQLite files together when either exceeds the limit
   try {
     ensureLogDir();
     const maxSize = ((typeof cfg !== "undefined" && cfg?.maxLogSizeMB) ? cfg.maxLogSizeMB : 2) * 1024 * 1024;
-    const activePath = activeNum === 1 ? LOG_FILE_1 : LOG_FILE_2;
-
-    let size = 0;
-    if (fs.existsSync(activePath)) {
-      size = fs.statSync(activePath).size;
+    const activeJsonPath = activeNum === 1 ? LOG_FILE_1 : LOG_FILE_2;
+    let jsonSize = 0;
+    if (fs.existsSync(activeJsonPath)) {
+      jsonSize = fs.statSync(activeJsonPath).size;
     }
+    let dbSize = 0;
+    try { dbSize = fs.statSync(getSystemDbPath(activeNum)).size; } catch {}
+    if (maxSize > 0 && (jsonSize >= maxSize || dbSize >= maxSize)) {
+      rotateLogStorage();
+      activeNum = (typeof cfg !== "undefined" && cfg?.activeLogFile) ? cfg.activeLogFile : activeNum;
+      logEntry.file = activeNum;
+    }
+  } catch (err) {}
 
-    if (size >= maxSize) {
-      // Rotate to the other file
-      const nextNum = activeNum === 1 ? 2 : 1;
-      const nextPath = nextNum === 1 ? LOG_FILE_1 : LOG_FILE_2;
-      fs.writeFileSync(nextPath, "", "utf-8"); // Clear/overwrite next file
-      if (typeof cfg !== "undefined" && cfg) {
-        cfg.activeLogFile = nextNum;
-        saveConfig(cfg);
+  // Persistent SQLite dual-file storage (primary read source for the dashboard)
+  try {
+    if (!sysDb) initSystemLogDb();
+    if (sysDb) {
+      sysDb.prepare(
+        "INSERT INTO system_logs (time, level, category, file, message) VALUES (?, ?, ?, ?, ?)"
+      ).run(new Date(timestamp).getTime(), level, category || null, logEntry.file || null, message);
+      const row = sysDb.prepare("SELECT COUNT(*) AS c FROM system_logs").get() as any;
+      const count = row ? row.c : 0;
+      if (count > SYSTEM_LOG_LIMIT) {
+        sysDb.prepare(`
+          DELETE FROM system_logs WHERE id IN (
+            SELECT id FROM system_logs ORDER BY id DESC LIMIT -1 OFFSET ?
+          )
+        `).run(SYSTEM_LOG_LIMIT);
       }
-      logEntry.file = nextNum;
-      fs.appendFileSync(nextPath, JSON.stringify(logEntry) + "\n", "utf-8");
-    } else {
-      fs.appendFileSync(activePath, JSON.stringify(logEntry) + "\n", "utf-8");
     }
+  } catch (err) {
+    console.error("Failed to write system log to DB:", err);
+  }
+
+  // Dual-file JSON disk storage (audit backup)
+  try {
+    ensureLogDir();
+    const activePath = activeNum === 1 ? LOG_FILE_1 : LOG_FILE_2;
+    fs.appendFileSync(activePath, JSON.stringify(logEntry) + "\n", "utf-8");
   } catch (err) {}
 }
 
-function readDiskLogs(): any[] {
+function readDiskLogs(limit?: number): any[] {
   try {
     ensureLogDir();
     const activeNum = (typeof cfg !== "undefined" && cfg?.activeLogFile) ? cfg.activeLogFile : 1;
@@ -228,9 +247,9 @@ function readDiskLogs(): any[] {
     const parseLogFile = (filePath: string, fileNum: number) => {
       if (!fs.existsSync(filePath)) return [];
       const content = fs.readFileSync(filePath, "utf-8");
-      return content
-        .split("\n")
-        .filter(Boolean)
+      const lines = content.split("\n").filter(Boolean);
+      const tail = limit ? lines.slice(-limit) : lines;
+      return tail
         .map(line => {
           try {
             const parsed = JSON.parse(line);
@@ -244,13 +263,126 @@ function readDiskLogs(): any[] {
 
     const activeLogs = parseLogFile(activePath, activeNum);
     if (activeLogs.length === 0) {
-      return systemLogs.filter(log => !log.file || log.file === activeNum);
+      const memLogs = systemLogs.filter(log => !log.file || log.file === activeNum);
+      return limit && memLogs.length > limit ? memLogs.slice(-limit) : memLogs;
     }
-    return activeLogs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    const sorted = activeLogs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    return limit && sorted.length > limit ? sorted.slice(-limit) : sorted;
   } catch {
     const activeNum = (typeof cfg !== "undefined" && cfg?.activeLogFile) ? cfg.activeLogFile : 1;
-    return systemLogs.filter(log => !log.file || log.file === activeNum);
+    const memLogs = systemLogs.filter(log => !log.file || log.file === activeNum);
+    return limit && memLogs.length > limit ? memLogs.slice(-limit) : memLogs;
   }
+}
+
+// System logs (SQLite-backed): dual-file round-robin storage mirroring the JSON log files
+const SYSTEM_DB_FILE_1 = path.join(LOGS_DIR, "system_logs.db");
+const SYSTEM_DB_FILE_2 = path.join(LOGS_DIR, "system_logs-2.db");
+const SYSTEM_LOG_LIMIT = 50000;
+let sysDb: DatabaseSync | null = null;
+
+function getSystemDbPath(num: number): string {
+  return num === 2 ? SYSTEM_DB_FILE_2 : SYSTEM_DB_FILE_1;
+}
+
+function importDiskLogsToSqlite() {
+  if (!sysDb) return;
+  const parseFile = (filePath: string, fileNum: number) => {
+    if (!fs.existsSync(filePath)) return [];
+    const content = fs.readFileSync(filePath, "utf-8");
+    return content.split("\n").filter(Boolean).map(line => {
+      try { return { ...JSON.parse(line), file: fileNum }; } catch { return null; }
+    }).filter(Boolean) as any[];
+  };
+  const all = [...parseFile(LOG_FILE_1, 1), ...parseFile(LOG_FILE_2, 2)]
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  const existing = new Set<string>();
+  const rows = sysDb.prepare("SELECT time, message FROM system_logs").all() as any[];
+  for (const r of rows) existing.add(`${r.time}:${r.message}`);
+  const insert = sysDb.prepare(
+    "INSERT INTO system_logs (time, level, category, file, message) VALUES (?, ?, ?, ?, ?)"
+  );
+  let added = 0;
+  for (const l of all) {
+    const t = new Date(l.timestamp).getTime();
+    if (existing.has(`${t}:${l.message}`)) continue;
+    try {
+      insert.run(t, l.level, l.category || null, l.file || null, l.message);
+      added++;
+    } catch {}
+  }
+  if (added > 0) {
+    console.log(`[INFO] [SYSTEM] Imported ${added} system log entries from disk.`);
+  }
+}
+
+function openSystemLogDb(num: number) {
+  try {
+    ensureLogDir();
+    if (sysDb) { try { sysDb.close(); } catch {} }
+    sysDb = new DatabaseSync(getSystemDbPath(num));
+    sysDb.exec(`
+      CREATE TABLE IF NOT EXISTS system_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        time INTEGER NOT NULL,
+        level TEXT NOT NULL,
+        category TEXT,
+        file INTEGER,
+        message TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_syslog_time ON system_logs(time);
+      CREATE INDEX IF NOT EXISTS idx_syslog_level ON system_logs(level);
+    `);
+    importDiskLogsToSqlite();
+    sysDb.prepare(`
+      DELETE FROM system_logs WHERE id NOT IN (
+        SELECT id FROM system_logs ORDER BY id DESC LIMIT ?
+      )
+    `).run(SYSTEM_LOG_LIMIT);
+  } catch (err: any) {
+    console.error("Failed to initialize system log database:", err);
+    try { if (sysDb) sysDb.close(); } catch {}
+    sysDb = null;
+  }
+}
+
+function initSystemLogDb() {
+  const activeNum = (typeof cfg !== "undefined" && cfg?.activeLogFile) ? cfg.activeLogFile : 1;
+  openSystemLogDb(activeNum);
+}
+
+function rotateLogStorage() {
+  const activeNum = (typeof cfg !== "undefined" && cfg?.activeLogFile) ? cfg.activeLogFile : 1;
+  const nextNum = activeNum === 1 ? 2 : 1;
+  try {
+    ensureLogDir();
+    // Rotate JSON file
+    const nextJsonPath = nextNum === 1 ? LOG_FILE_1 : LOG_FILE_2;
+    fs.writeFileSync(nextJsonPath, "", "utf-8");
+    // Rotate SQLite file
+    if (sysDb) { try { sysDb.close(); } catch {} }
+    sysDb = null;
+    const nextDbPath = getSystemDbPath(nextNum);
+    if (fs.existsSync(nextDbPath)) fs.writeFileSync(nextDbPath, "", "utf-8");
+    if (typeof cfg !== "undefined" && cfg) {
+      cfg.activeLogFile = nextNum;
+      saveConfig(cfg);
+    }
+    openSystemLogDb(nextNum);
+  } catch (err: any) {
+    console.error("Failed to rotate log storage:", err);
+  }
+}
+
+function systemLogRowToApi(row: any) {
+  return {
+    id: row.id,
+    timestamp: new Date(row.time).toISOString(),
+    level: row.level,
+    category: row.category || "system",
+    file: row.file,
+    message: row.message
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -465,6 +597,7 @@ let cfg = loadConfig();
 async function startServer() {
   const app = express();
   initRequestLogDb();
+  initSystemLogDb();
 
   let host = "0.0.0.0";
   let port = 3000;
@@ -841,9 +974,41 @@ async function startServer() {
 
   // 3. System Logs API (for Live dashboard logs)
   app.get("/api/logs", (req, res) => {
+    const q = req.query as any;
+    const limit = Math.min(parseInt(q.limit, 10) || 500, 1000);
+    const clauses: string[] = [];
+    const params: any[] = [];
+    const sinceId = parseInt(q.since, 10);
+    if (!Number.isNaN(sinceId) && sinceId > 0) { clauses.push("id > ?"); params.push(sinceId); }
+    if (q.level) { clauses.push("level = ?"); params.push(q.level); }
+    if (q.category) { clauses.push("category = ?"); params.push(q.category); }
+
+    if (sysDb) {
+      try {
+        const where = clauses.length > 0 ? " WHERE " + clauses.join(" AND ") : "";
+        const totalRow = sysDb.prepare(`SELECT COUNT(*) AS c FROM system_logs${where}`).get(...params) as any;
+        const total = totalRow ? totalRow.c : 0;
+        let rows: any[];
+        if (!Number.isNaN(sinceId) && sinceId > 0) {
+          rows = sysDb.prepare(`SELECT * FROM system_logs${where} ORDER BY id ASC LIMIT ?`).all(...params, limit) as any[];
+        } else {
+          rows = (sysDb.prepare(`SELECT * FROM system_logs${where} ORDER BY id DESC LIMIT ?`).all(...params, limit) as any[]).reverse();
+        }
+        res.json({ logs: rows.map(systemLogRowToApi), total });
+        return;
+      } catch (err: any) {
+        // fall through to disk fallback on error
+      }
+    }
+
+    // Fallback: read from disk/memory
     const activeNum = cfg.activeLogFile || 1;
-    const diskLogs = readDiskLogs();
-    res.json(diskLogs.length > 0 ? diskLogs : systemLogs.filter(log => !log.file || log.file === activeNum));
+    const diskLogs = readDiskLogs(limit);
+    const allLogs = diskLogs.length > 0 ? diskLogs : systemLogs.filter(log => !log.file || log.file === activeNum);
+    let filtered = allLogs;
+    if (q.level) filtered = filtered.filter(l => l.level === q.level);
+    if (q.category) filtered = filtered.filter(l => (l.category || "system") === q.category);
+    res.json({ logs: filtered, total: filtered.length });
   });
 
   app.get("/api/logs/status", (req, res) => {
@@ -853,13 +1018,20 @@ async function startServer() {
       let s2 = 0;
       if (fs.existsSync(LOG_FILE_1)) s1 = fs.statSync(LOG_FILE_1).size;
       if (fs.existsSync(LOG_FILE_2)) s2 = fs.statSync(LOG_FILE_2).size;
-      const diskLogs = readDiskLogs();
+      const activeNum = cfg.activeLogFile || 1;
+      let totalLogs = systemLogs.length;
+      if (sysDb) {
+        try {
+          const row = sysDb.prepare("SELECT COUNT(*) AS c FROM system_logs").get() as any;
+          totalLogs = row ? row.c : 0;
+        } catch {}
+      }
       res.json({
-        activeFile: cfg.activeLogFile || 1,
+        activeFile: activeNum,
         file1Size: s1,
         file2Size: s2,
         maxLogSizeMB: cfg.maxLogSizeMB || 2,
-        totalLogs: diskLogs.length
+        totalLogs
       });
     } catch {
       res.json({
@@ -878,6 +1050,13 @@ async function startServer() {
       ensureLogDir();
       fs.writeFileSync(LOG_FILE_1, "", "utf-8");
       fs.writeFileSync(LOG_FILE_2, "", "utf-8");
+      if (sysDb) {
+        sysDb.prepare("DELETE FROM system_logs").run();
+        sysDb.prepare("DELETE FROM sqlite_sequence WHERE name = 'system_logs'").run();
+      }
+      const activeNum = cfg.activeLogFile || 1;
+      const standbyPath = getSystemDbPath(activeNum === 1 ? 2 : 1);
+      if (fs.existsSync(standbyPath)) fs.writeFileSync(standbyPath, "", "utf-8");
     } catch {}
     addLog("info", "All system and proxy logs cleared.", "system");
     res.json({ success: true });
@@ -902,6 +1081,7 @@ async function startServer() {
     const params: any[] = [];
     if (q.key) { clauses.push("key_name LIKE ?"); params.push(`%${q.key}%`); }
     if (q.model) { clauses.push("model LIKE ?"); params.push(`%${q.model}%`); }
+    if (q.provider) { clauses.push("provider = ?"); params.push(q.provider); }
     if (q.from) { clauses.push("time >= ?"); params.push(new Date(q.from).getTime()); }
     if (q.to) { clauses.push("time <= ?"); params.push(new Date(q.to).getTime()); }
     return { clauses, params };

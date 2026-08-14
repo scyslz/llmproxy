@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Provider, VirtualKey, SystemLog } from "./types";
 import { motion, AnimatePresence } from "motion/react";
 import Header from "./components/Header";
@@ -30,6 +30,19 @@ export default function App() {
   const [isPollingLogs, setIsPollingLogs] = useState(true);
   const [playgroundKey, setPlaygroundKey] = useState("");
   const [playgroundModel, setPlaygroundModel] = useState("");
+  const lastLogIdRef = useRef(0);
+
+  const fetchSystemLogs = useCallback(async () => {
+    try {
+      const res = await apiFetch("/api/logs?limit=500");
+      if (res.ok) {
+        const data = await res.json();
+        const logsData = Array.isArray(data) ? data : data?.logs ?? [];
+        setLogs(logsData);
+        if (logsData.length > 0) lastLogIdRef.current = logsData[logsData.length - 1].id ?? 0;
+      }
+    } catch {}
+  }, []);
 
   // Listen for unauthorized events
   useEffect(() => {
@@ -61,7 +74,7 @@ export default function App() {
         apiFetch("/api/providers"),
         apiFetch("/api/keys"),
         apiFetch("/api/settings"),
-        apiFetch("/api/logs")
+        apiFetch("/api/logs?limit=500")
       ]);
 
       if (!provRes.ok || !keyRes.ok || !setRes.ok || !logRes.ok) {
@@ -71,14 +84,16 @@ export default function App() {
       const providersData = await provRes.json();
       const keysData = await keyRes.json();
       const settingsData = await setRes.json();
-      const logsData = await logRes.json();
+      const logsDataRaw = await logRes.json();
 
       setProviders(providersData);
       setVirtualKeys(keysData);
       setEnableVirtualKey(settingsData.enableVirtualKey);
       setEnableAdminAuth(settingsData.enableAdminAuth || false);
       setDebug(settingsData.debug);
+      const logsData = Array.isArray(logsDataRaw) ? logsDataRaw : logsDataRaw?.logs ?? [];
       setLogs(logsData);
+      if (logsData.length > 0) lastLogIdRef.current = logsData[logsData.length - 1].id ?? 0;
     } catch (err: any) {
       console.error(err);
       setError(err.message || "An unexpected error occurred during startup data fetch.");
@@ -97,10 +112,17 @@ export default function App() {
 
     const interval = setInterval(async () => {
       try {
-        const res = await apiFetch("/api/logs");
+        const res = await apiFetch(`/api/logs?since=${lastLogIdRef.current}&limit=500`);
         if (res.ok) {
-          const logsData = await res.json();
-          setLogs(logsData);
+          const data = await res.json();
+          const newLogs = Array.isArray(data) ? data : data?.logs ?? [];
+          if (newLogs.length > 0) {
+            setLogs((prev) => {
+              const merged = [...prev, ...newLogs];
+              return merged.length > 2000 ? merged.slice(merged.length - 2000) : merged;
+            });
+            lastLogIdRef.current = newLogs[newLogs.length - 1].id ?? lastLogIdRef.current;
+          }
         }
       } catch (e) {
         // ignore log polling errors to prevent spamming
@@ -122,8 +144,7 @@ export default function App() {
       );
       
       // Force refresh logs
-      const logRes = await apiFetch("/api/logs");
-      if (logRes.ok) setLogs(await logRes.json());
+      await fetchSystemLogs();
     } catch (err: any) {
       alert(`Error enabling provider: ${err.message}`);
     }
@@ -234,26 +255,14 @@ export default function App() {
     try {
       await apiFetch("/api/logs/clear", { method: "POST" });
       setLogs([]);
+      lastLogIdRef.current = 0;
     } catch (e) {
       // ignore
     }
   };
 
   const handleRefreshLogs = async () => {
-    try {
-      const res = await apiFetch("/api/logs");
-      if (res.ok) setLogs(await res.json());
-    } catch (e) {
-      // ignore
-    }
-  };
-
-  const handleClearRequestLogs = async () => {
-    try {
-      await apiFetch("/api/request-logs/clear", { method: "POST" });
-    } catch (e) {
-      // ignore
-    }
+    await fetchSystemLogs();
   };
 
   const activeProviderName = providers.find((p) => p.enabled)?.name || "No Active Router";
@@ -435,7 +444,7 @@ export default function App() {
                 <h3 className="font-display font-semibold text-neutral-800 text-base">Request Usage</h3>
                 <p className="text-xs text-neutral-500">Per-request token usage (prompt / cached / completion), key and model attribution, filterable by key and time range</p>
               </div>
-              <RequestLogs virtualKeys={virtualKeys} onClear={handleClearRequestLogs} />
+              <RequestLogs virtualKeys={virtualKeys} providers={providers} />
             </motion.div>
           )}
 

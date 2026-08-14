@@ -117,7 +117,7 @@ export default function TerminalLogs({ logs, onClear, onRefresh, isPolling, setI
             {isPolling ? "• Live Polling" : "Paused"}
           </button>
           <button
-            onClick={onRefresh}
+            onClick={() => { onRefresh(); fetchStatus(); }}
             title="Refresh logs"
             className="p-1 hover:bg-neutral-100 rounded-lg text-neutral-500 hover:text-neutral-800 transition-colors cursor-pointer"
           >
@@ -187,7 +187,7 @@ export default function TerminalLogs({ logs, onClear, onRefresh, isPolling, setI
         ) : (
           filteredLogs.map((log, index) => (
             <div
-              key={index}
+              key={log.id ?? index}
               className={`leading-relaxed px-2 py-1.5 rounded-lg transition-colors flex items-start space-x-2 ${
                 log.file && logStatus && log.file === logStatus.activeFile
                   ? "bg-neutral-900/90 border-l-2 border-emerald-500"

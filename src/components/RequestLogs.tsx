@@ -1,18 +1,19 @@
 import { useState, useEffect, useCallback } from "react";
-import { RequestLog, RequestLogStats, VirtualKey } from "../types";
-import { Trash2, RefreshCw, Filter, Activity, ArrowDownToLine, ArrowUpFromLine, Database, Cpu } from "lucide-react";
+import { RequestLog, RequestLogStats, VirtualKey, Provider } from "../types";
+import { RefreshCw, Filter, Activity, ArrowDownToLine, ArrowUpFromLine, Database, Cpu } from "lucide-react";
 import { apiFetch } from "../lib/api";
 
 interface RequestLogsProps {
   virtualKeys: VirtualKey[];
-  onClear: () => void;
+  providers: Provider[];
 }
 
-export default function RequestLogs({ virtualKeys, onClear }: RequestLogsProps) {
+export default function RequestLogs({ virtualKeys, providers }: RequestLogsProps) {
   const [logs, setLogs] = useState<RequestLog[]>([]);
   const [stats, setStats] = useState<RequestLogStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [keyFilter, setKeyFilter] = useState("");
+  const [providerFilter, setProviderFilter] = useState("");
   const [modelFilter, setModelFilter] = useState("");
   const [timeRange, setTimeRange] = useState("all");
   const [page, setPage] = useState(1);
@@ -32,6 +33,7 @@ export default function RequestLogs({ virtualKeys, onClear }: RequestLogsProps) 
   const buildQuery = useCallback((p: number) => {
     const params = new URLSearchParams();
     if (keyFilter.trim()) params.set("key", keyFilter.trim());
+    if (providerFilter) params.set("provider", providerFilter);
     if (modelFilter.trim()) params.set("model", modelFilter.trim());
     if (timeRange !== "all") {
       const now = new Date();
@@ -47,7 +49,7 @@ export default function RequestLogs({ virtualKeys, onClear }: RequestLogsProps) 
     params.set("limit", String(PAGE_SIZE));
     if (p > 1) params.set("offset", String((p - 1) * PAGE_SIZE));
     return params.toString();
-  }, [keyFilter, modelFilter, timeRange]);
+  }, [keyFilter, providerFilter, modelFilter, timeRange]);
 
   const fetchLogs = useCallback(async (p: number) => {
     try {
@@ -76,13 +78,6 @@ export default function RequestLogs({ virtualKeys, onClear }: RequestLogsProps) 
 
   const handleRefresh = async () => {
     await fetchLogs(page);
-  };
-
-  const handleClear = async () => {
-    onClear();
-    setLogs([]);
-    setStats(null);
-    setTimeout(() => fetchLogs(1), 500);
   };
 
   const fmtNum = (n: number) => (n || 0).toLocaleString();
@@ -122,17 +117,10 @@ export default function RequestLogs({ virtualKeys, onClear }: RequestLogsProps) 
             >
               <RefreshCw className="w-3.5 h-3.5" />
             </button>
-            <button
-              onClick={handleClear}
-              title="Clear all request logs"
-              className="p-1.5 hover:bg-red-50 rounded-lg text-red-500 hover:text-red-700 transition-colors cursor-pointer"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div className="space-y-1">
             <label className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">Key</label>
             <select
@@ -157,6 +145,19 @@ export default function RequestLogs({ virtualKeys, onClear }: RequestLogsProps) 
             />
           </div>
           <div className="space-y-1">
+            <label className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">Provider</label>
+            <select
+              value={providerFilter}
+              onChange={(e) => setProviderFilter(e.target.value)}
+              className="w-full bg-white border border-neutral-200 rounded-lg px-3 py-1.5 text-xs text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400 cursor-pointer"
+            >
+              <option value="">All Providers</option>
+              {providers.map((p) => (
+                <option key={p.id} value={p.name}>{p.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1">
             <label className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">Time Range</label>
             <select
               value={timeRange}
@@ -175,10 +176,10 @@ export default function RequestLogs({ virtualKeys, onClear }: RequestLogsProps) 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         {[
           { label: "Requests", value: fmtCompact(stats?.count || 0), icon: <Activity className="w-4 h-4" />, color: "text-neutral-700 bg-neutral-100" },
-          { label: "Prompt In", value: fmtCompact(stats?.promptTokens || 0), icon: <ArrowDownToLine className="w-4 h-4" />, color: "text-blue-700 bg-blue-50" },
-          { label: "Cached Read", value: fmtCompact(stats?.cachedTokens || 0), icon: <Database className="w-4 h-4" />, color: "text-violet-700 bg-violet-50" },
-          { label: "Completion Out", value: fmtCompact(stats?.completionTokens || 0), icon: <ArrowUpFromLine className="w-4 h-4" />, color: "text-emerald-700 bg-emerald-50" },
-          { label: "Total Tokens", value: fmtCompact(stats?.totalTokens || 0), icon: <Cpu className="w-4 h-4" />, color: "text-amber-700 bg-amber-50" }
+          { label: "Read", value: fmtCompact(stats?.promptTokens || 0), icon: <ArrowDownToLine className="w-4 h-4" />, color: "text-blue-700 bg-blue-50" },
+          { label: "Cached", value: fmtCompact(stats?.cachedTokens || 0), icon: <Database className="w-4 h-4" />, color: "text-violet-700 bg-violet-50" },
+          { label: "Write", value: fmtCompact(stats?.completionTokens || 0), icon: <ArrowUpFromLine className="w-4 h-4" />, color: "text-emerald-700 bg-emerald-50" },
+          { label: "Total", value: fmtCompact(stats?.totalTokens || 0), icon: <Cpu className="w-4 h-4" />, color: "text-amber-700 bg-amber-50" }
         ].map((s) => (
           <div key={s.label} className="bg-white border border-neutral-200 rounded-2xl shadow-sm p-4">
             <div className="flex items-center space-x-2">
@@ -210,9 +211,9 @@ export default function RequestLogs({ virtualKeys, onClear }: RequestLogsProps) 
                   <th className="py-3 px-3">Key</th>
                   <th className="py-3 px-3">Model</th>
                   <th className="py-3 px-3">Provider</th>
-                  <th className="py-3 px-3 text-right">Prompt In</th>
+                  <th className="py-3 px-3 text-right">Read</th>
                   <th className="py-3 px-3 text-right">Cached</th>
-                  <th className="py-3 px-3 text-right">Completion Out</th>
+                  <th className="py-3 px-3 text-right">Write</th>
                   <th className="py-3 px-3 text-right">Total</th>
                   <th className="py-3 px-3 text-center">Status</th>
                   <th className="py-3 pl-3 pr-5 text-right">Duration</th>
