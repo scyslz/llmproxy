@@ -70,6 +70,7 @@ Docker Compose 直接使用镜像 `scyslz/llmproxy`，无需本地构建。容�
       "apiKey": "sk-xxx",
       "enabled": true,
       "models": ["gpt-4o"],
+      "defaultModel": "gpt-4o",   // 可选：请求模型不在 models 列表时的回退模型，留空则用第一个
       "concurrency": 0,       // 0 = 不限并发
       "timeout": 120000       // 上游请求超时(ms)，0 或省略 = 不超时
     }
@@ -93,9 +94,11 @@ Docker Compose 直接使用镜像 `scyslz/llmproxy`，无需本地构建。容�
 | `baseUrl` | string | 上游基础地址，自动补全 `/v1` |
 | `apiKey` | string | 上游 API Key |
 | `enabled` | boolean | 是否启用（同时只能启用一个） |
-| `models` | string[] | 支持模型列表，请求模型不匹配时自动用第一个回退 |
+| `models` | string[] | 支持模型列表，请求模型不匹配时自动用 `defaultModel` 回退（未配置则用第一个） |
+| `defaultModel` | string | 可选，请求模型不在 `models` 列表时的回退模型 |
 | `concurrency` | number | 并发限制，0 = 不限 |
 | `timeout` | number | 上游请求超时毫秒数，0/省略 = 不超时 |
+| `openaiEndpoint` | string | 可选，上游转发路径（如 `/chat/completions`），留空则用 `/v1` + 子路径 |
 
 ### 多级代理
 

@@ -53,7 +53,8 @@ export default function ProviderCard({
     apiKey: "",
     modelsString: "",
     concurrency: 0,
-    openaiEndpoint: ""
+    openaiEndpoint: "",
+    defaultModel: ""
   });
   const [showApiKeyId, setShowApiKeyId] = useState<string | null>(null);
 
@@ -82,7 +83,8 @@ export default function ProviderCard({
       apiKey: "",
       modelsString: preset.models.join(", "),
       concurrency: 0,
-      openaiEndpoint: ""
+      openaiEndpoint: "",
+      defaultModel: ""
     });
   };
 
@@ -95,7 +97,8 @@ export default function ProviderCard({
       apiKey: p.apiKey,
       modelsString: p.models.join(", "),
       concurrency: p.concurrency || 0,
-      openaiEndpoint: p.openaiEndpoint || ""
+      openaiEndpoint: p.openaiEndpoint || "",
+      defaultModel: p.defaultModel || ""
     });
     setIsEditing(p.id);
   };
@@ -109,7 +112,8 @@ export default function ProviderCard({
       apiKey: "",
       modelsString: "",
       concurrency: 0,
-      openaiEndpoint: ""
+      openaiEndpoint: "",
+      defaultModel: ""
     });
     setIsEditing("new");
   };
@@ -223,7 +227,8 @@ export default function ProviderCard({
       apiKey: formData.apiKey.trim(),
       models,
       concurrency: formData.concurrency || 0,
-      openaiEndpoint: formData.openaiEndpoint.trim() || undefined
+      openaiEndpoint: formData.openaiEndpoint.trim() || undefined,
+      defaultModel: formData.defaultModel.trim() || undefined
     };
 
     if (isEditing === "new") {
@@ -461,6 +466,21 @@ export default function ProviderCard({
                 onChange={(e) => setFormData({ ...formData, modelsString: e.target.value })}
                 className="w-full bg-neutral-50 border border-neutral-300 rounded-xl px-3.5 py-2 text-sm font-mono text-neutral-800 outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 focus:bg-white transition-colors"
               />
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-neutral-700">Default Model (fallback)</label>
+                <select
+                  value={formData.defaultModel}
+                  onChange={(e) => setFormData({ ...formData, defaultModel: e.target.value })}
+                  className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2 text-sm text-neutral-800 outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 cursor-pointer shadow-2xs"
+                >
+                  <option value="">Auto (first model in list)</option>
+                  {currentSelectedModels.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-neutral-500">Used when a request model is not in the Supported Models list. Leave empty to keep the current first-model behavior.</p>
+              </div>
             </div>
 
             {/* Modal Footer */}
@@ -623,7 +643,7 @@ export default function ProviderCard({
                         <span className="text-[10px] text-neutral-400 italic py-1">No models match "{cardKeyword}"</span>
                       ) : (
                         cardFilteredModels.map((model) => {
-                          const isDefault = p.models[0] === model;
+                          const isDefault = (p.defaultModel || p.models[0]) === model;
                           return (
                             <span
                               key={model}

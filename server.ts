@@ -14,6 +14,7 @@ interface Provider {
   concurrency?: number; // 0 or undefined = unlimited
   timeout?: number; // upstream request timeout in ms, 0 or undefined = no timeout
   openaiEndpoint?: string; // optional path (e.g. /chat/completions), preferred over derived /v1 + subpath
+  defaultModel?: string; // optional fallback model used when request model is not in the models list
 }
 
 class Semaphore {
@@ -434,7 +435,8 @@ function loadConfig(): Config {
           enabled: typeof p.enabled === "boolean" ? p.enabled : p.Enabled || false,
           models: p.models || p.Models || [],
           concurrency: typeof p.concurrency === "number" ? p.concurrency : 0,
-          openaiEndpoint: p.openaiEndpoint || p.openai_endpoint || ""
+          openaiEndpoint: p.openaiEndpoint || p.openai_endpoint || "",
+          defaultModel: p.defaultModel || p.default_model || ""
         };
         if (mapped.id === "gemini" && !mapped.apiKey && process.env.GEMINI_API_KEY) {
           mapped.apiKey = process.env.GEMINI_API_KEY;
@@ -1039,7 +1041,7 @@ async function startServer() {
       // Model resolution check
       let modelOK = provider.models.includes(reqModel);
       if (!modelOK && provider.models.length > 0) {
-        const fallbackModel = provider.models[0];
+        const fallbackModel = provider.defaultModel || provider.models[0];
         addLog(
           "warn",
           `Model '${reqModel}' not supported by provider '${provider.name}'. Substituting with fallback '${fallbackModel}'.`,

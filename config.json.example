@@ -17,6 +17,7 @@
       "apiKey": "your-api-key",
       "enabled": true,
       "models": ["model-1", "model-2"],
+      "defaultModel": "model-1",
       "concurrency": 0,
       "timeout": 120000
     }

@@ -7,6 +7,7 @@ export interface Provider {
   models: string[];
   concurrency?: number;
   openaiEndpoint?: string;
+  defaultModel?: string;
 }
 
 export interface VirtualKey {
