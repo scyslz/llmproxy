@@ -40,14 +40,11 @@ npm run build:sea && ./dist/llmproxy
 docker build -t llmproxy .
 docker run -d -p 4000:4000 \
   -v $PWD/config/config.json:/app/config/config.json \
+  -v $PWD/logs:/app/logs \
   llmproxy
-
-# Docker Compose
-docker compose up -d
-
-# 停止
-docker compose down
 ```
+
+> **重要**：请求用量数据（SQLite）存放在 `/app/logs/requests.db`。`docker run` 时必须挂载 `logs` 目录（如上面的 `-v $PWD/logs:/app/logs`），否则容器删除/重建后 Usage 数据会丢失。配置同样需要挂载（`-v $PWD/config/config.json:/app/config/config.json`）。
 
 Docker Compose 直接使用镜像 `scyslz/llmproxy`，无需本地构建。容器内的配置目录为 `/app/config`（挂载宿主机的 `config/`），日志与 SQLite 请求用量数据位于 `/app/logs`，`compose.yaml` 已自动将这两个目录挂载到宿主机，配置修改后重启生效：`docker compose restart`。
 
