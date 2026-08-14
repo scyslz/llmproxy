@@ -535,6 +535,11 @@ export default function ProviderCard({
           const cardFilteredModels = p.models.filter(m =>
             m.toLowerCase().includes(cardKeyword.toLowerCase())
           );
+          if (p.defaultModel && cardFilteredModels.includes(p.defaultModel)) {
+            cardFilteredModels.sort((a, b) =>
+              (a === p.defaultModel ? -1 : 0) - (b === p.defaultModel ? -1 : 0)
+            );
+          }
 
           return (
             <div
