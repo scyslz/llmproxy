@@ -175,7 +175,15 @@ function ensureLogDir() {
 }
 
 // Log storage for the live dashboard logs
-const systemLogs: Array<{ timestamp: string; level: "info" | "warn" | "error"; category?: "system" | "proxy"; file?: number; message: string }> = [];
+const systemLogs: Array<{ timestamp: string; level: "info" | "warn" | "error"; category?: "system" | "proxy"; file?: number; message: string; requestId?: string }> = [];
+
+function hasRelatedLogs(requestId?: string): boolean {
+  return !!requestId && systemLogs.some((l) => l.requestId === requestId);
+}
+
+function shortRequestId(): string {
+  return randomBytes(8).toString("base64url");
+}
 
 function addLog(
   level: "info" | "warn" | "error",
@@ -1201,9 +1209,13 @@ async function startServer() {
     const startTime = Date.now();
     const originalPath = req.url;
     const method = req.method;
-    const requestId = crypto.randomUUID();
+    const requestId = shortRequestId();
+    const logDetail = cfg.logDetail || "basic";
+    const logProxy = (level: "info" | "warn" | "error", message: string) => {
+      if (logDetail !== "off") addLog(level, message, "proxy", requestId);
+    };
 
-    addLog("info", `[API Proxy] ${method} ${originalPath} initiated`, "proxy", requestId);
+    logProxy("info", `[API Proxy] ${method} ${originalPath} initiated`);
 
     // Determine target providers allowed by Virtual Key
     let allowedProviders = cfg.providers;
@@ -1215,9 +1227,9 @@ async function startServer() {
 
     if (cfg.enableVirtualKey) {
       if (cfg.keys.length === 0) {
-        addLog("warn", `Virtual key mode enabled but no keys configured. Proceeding with default routing.`, "proxy", requestId);
+        logProxy("warn", `Virtual key mode enabled but no keys configured. Proceeding with default routing.`);
       } else if (!vKey) {
-        addLog("error", `Virtual key validation failed for request to ${originalPath}`, "proxy", requestId);
+        logProxy("error", `Virtual key validation failed for request to ${originalPath}`);
         return res.status(401).json({ error: "Unauthorized: Invalid or missing virtual key" });
       }
     }
@@ -1232,7 +1244,7 @@ async function startServer() {
     // Select active provider
     const provider = allowedProviders.find(p => p.enabled);
     if (!provider) {
-      addLog("error", `No active provider enabled or allowed for request to ${originalPath}`, "proxy", requestId);
+      logProxy("error", `No active provider enabled or allowed for request to ${originalPath}`);
       return res.status(503).json({ error: "Service Unavailable: No provider enabled/authorized" });
     }
 
@@ -1248,12 +1260,7 @@ async function startServer() {
       if (!modelOK && provider.models.length > 0) {
         const fallbackModel = provider.defaultModel || provider.models[0];
         if (cfg.logDetail === "all") {
-          addLog(
-            "warn",
-            `Model '${reqModel}' not supported by provider '${provider.name}'. Substituting with fallback '${fallbackModel}'.`,
-            "proxy",
-            requestId
-          );
+          logProxy("warn", `Model '${reqModel}' not supported by provider '${provider.name}'. Substituting with fallback '${fallbackModel}'.`);
         }
         reqBody = { ...reqBody, model: fallbackModel };
         reqModel = fallbackModel;
@@ -1285,7 +1292,6 @@ async function startServer() {
       ? `${cleanBaseUrl}${configuredEp.startsWith("/") ? configuredEp : `/${configuredEp}`}`
       : `${endpointBase}${cleanSubPath}`;
 
-    const logDetail = cfg.logDetail || "basic";
     const pathRewritten =
       configuredEp !== undefined &&
       configuredEp.trim() !== "" &&
@@ -1293,7 +1299,7 @@ async function startServer() {
 
     if (logDetail !== "off") {
       const forwardSuffix = `${method} ${originalPath} -> ${provider.name} (${reqModel || "default"})${virtualKeyUsed ? ` [Key: ${virtualKeyUsed}]` : ""}${pathRewritten ? ` => ${configuredEp}` : ""}`;
-      addLog("info", `[API Proxy Forward] ${forwardSuffix}`, "proxy", requestId);
+      logProxy("info", `[API Proxy Forward] ${forwardSuffix}`);
     }
 
     const shouldLogBody = cfg.logBody === true;
@@ -1301,10 +1307,10 @@ async function startServer() {
       const reqHeaders = Object.entries(req.headers)
         .map(([k, v]) => `${k}: ${k.toLowerCase() === "authorization" ? "[redacted]" : v}`)
         .join(" | ");
-      addLog("info", `[API Proxy Request Headers] ${reqHeaders}`, "proxy", requestId);
-      addLog("info", `[API Proxy Request URL] ${method} ${targetUrl}`, "proxy", requestId);
+      logProxy("info", `[API Proxy Request Headers] ${reqHeaders}`);
+      logProxy("info", `[API Proxy Request URL] ${method} ${targetUrl}`);
       if (shouldLogBody && (method === "POST" || method === "PUT")) {
-        addLog("info", `[API Proxy Request Body] ${JSON.stringify(reqBody)}`, "proxy", requestId);
+        logProxy("info", `[API Proxy Request Body] ${JSON.stringify(reqBody)}`);
       }
     };
     if (logDetail === "all") {
@@ -1353,7 +1359,7 @@ async function startServer() {
       if (timeoutId) clearTimeout(timeoutId);
 
       if (logDetail !== "off") {
-        addLog("info", `[API Proxy Complete] Status ${response.status} ${response.statusText} (${Date.now() - startTime}ms) -> ${provider.name}`, "proxy", requestId);
+        logProxy("info", `[API Proxy Complete] Status ${response.status} ${response.statusText} (${Date.now() - startTime}ms) -> ${provider.name}`);
       }
 
       // Pass along response headers except transfer-encoding/content-encoding
@@ -1383,7 +1389,7 @@ async function startServer() {
         response.headers.forEach((value, key) => {
           if (key.toLowerCase() !== "set-cookie") respHeaders.push(`${key}: ${value}`);
         });
-        addLog("info", `[API Proxy Response Headers] ${respHeaders.join(" | ")}`, "proxy", requestId);
+        logProxy("info", `[API Proxy Response Headers] ${respHeaders.join(" | ")}`);
       }
 
       if (response.body) {
@@ -1403,7 +1409,7 @@ async function startServer() {
           }
         }
         if (shouldLogBodyRes && resBodyBuffer) {
-          addLog("info", `[API Proxy Response Body] ${resBodyBuffer}`, "proxy", requestId);
+          logProxy("info", `[API Proxy Response Body] ${resBodyBuffer}`);
         }
       }
       res.end();
@@ -1448,14 +1454,13 @@ async function startServer() {
         durationMs: Date.now() - startTime,
         stream: isStream,
         requestId,
-        hasDetail: detailActive
+        hasDetail: hasRelatedLogs(requestId)
       });
     } catch (error: any) {
       if (timeoutId) clearTimeout(timeoutId);
       if (error.name === "AbortError") {
         if (abortReason === "timeout") {
-          detailActive = logDetail === "all" || logDetail === "error";
-          addLog("warn", `[API Proxy Timeout] Upstream timeout after ${timeoutMs}ms (${Date.now() - startTime}ms)`, "proxy", requestId);
+          logProxy("warn", `[API Proxy Timeout] Upstream timeout after ${timeoutMs}ms (${Date.now() - startTime}ms)`);
           addRequestLog({
             id: crypto.randomUUID(),
             timestamp: new Date().toISOString(),
@@ -1471,7 +1476,7 @@ async function startServer() {
             stream: false,
             error: "upstream timeout",
             requestId,
-            hasDetail: detailActive
+            hasDetail: hasRelatedLogs(requestId)
           });
           if (sem) sem.release();
           if (res.headersSent) {
@@ -1481,8 +1486,7 @@ async function startServer() {
           }
           return;
         }
-        detailActive = logDetail === "all" || logDetail === "error";
-        addLog("warn", `[API Proxy Aborted] Client closed connection (${Date.now() - startTime}ms)`, "proxy", requestId);
+        logProxy("warn", `[API Proxy Aborted] Client closed connection (${Date.now() - startTime}ms)`);
         addRequestLog({
           id: crypto.randomUUID(),
           timestamp: new Date().toISOString(),
@@ -1495,16 +1499,15 @@ async function startServer() {
           promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalTokens: 0,
           status: 0,
           durationMs: Date.now() - startTime,
-          stream: false,
-          error: "client closed connection",
-          requestId,
-          hasDetail: detailActive
-        });
+stream: false,
+            error: "client closed connection",
+            requestId,
+            hasDetail: hasRelatedLogs(requestId)
+          });
         if (sem) sem.release();
         return;
       }
-      detailActive = logDetail === "all" || logDetail === "error";
-      addLog("error", `[API Proxy Error] Forwarding failed: ${error.message} (${Date.now() - startTime}ms)`, "proxy", requestId);
+      logProxy("error", `[API Proxy Error] Forwarding failed: ${error.message} (${Date.now() - startTime}ms)`);
       addRequestLog({
         id: crypto.randomUUID(),
         timestamp: new Date().toISOString(),
@@ -1520,7 +1523,7 @@ async function startServer() {
         stream: false,
         error: error.message,
         requestId,
-        hasDetail: detailActive
+        hasDetail: hasRelatedLogs(requestId)
       });
       if (sem) sem.release();
       if (res.headersSent) {

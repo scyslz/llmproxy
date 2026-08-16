@@ -247,18 +247,14 @@ export default function RequestLogs({ virtualKeys, providers, onViewLogs }: Requ
                     </td>
                     <td className="py-2.5 pl-3 pr-5 text-right font-mono text-neutral-500 whitespace-nowrap">{log.durationMs}ms</td>
                     <td className="py-2.5 pl-3 pr-5 text-center whitespace-nowrap">
-                      {log.requestId && onViewLogs ? (
+                      {log.requestId && onViewLogs && log.hasDetail ? (
                         <button
                           onClick={() => onViewLogs(log.requestId!, !!log.hasDetail)}
-                          title={log.hasDetail ? "View related log details" : "View related summary logs (no detailed logs were recorded for this request)"}
-                          className={`inline-flex items-center space-x-1 px-2 py-1 rounded-lg text-[10px] font-bold transition-colors cursor-pointer ${
-                            log.hasDetail
-                              ? "bg-neutral-900 text-white hover:bg-neutral-800"
-                              : "bg-neutral-100 text-neutral-500 hover:bg-neutral-200 border border-neutral-200"
-                          }`}
+                          title="View related system logs for this request"
+                          className="inline-flex items-center space-x-1 px-2 py-1 rounded-lg text-[10px] font-bold bg-neutral-900 text-white hover:bg-neutral-800 transition-colors cursor-pointer"
                         >
                           <FileSearch className="w-3 h-3" />
-                          <span>{log.hasDetail ? "Detail" : "Summary"}</span>
+                          <span>Detail</span>
                         </button>
                       ) : (
                         <span className="text-neutral-300 text-[10px]">—</span>
