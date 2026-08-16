@@ -232,30 +232,30 @@ export default function TerminalLogs({ logs, onClear, onRefresh, isPolling, setI
           filteredLogs.map((log, index) => (
             <div
               key={log.id ?? index}
-              className={`leading-relaxed px-2 py-1.5 rounded-lg transition-colors flex items-start space-x-2 ${
+              className={`px-3 py-2 rounded-lg transition-colors ${
                 log.file && logStatus && log.file === logStatus.activeFile
                   ? "bg-neutral-900/90 border-l-2 border-emerald-500"
                   : "hover:bg-neutral-900/50 opacity-85"
               }`}
             >
-              <span className="text-neutral-500 select-none shrink-0 font-mono text-[10px] pt-0.5">
-                {new Date(log.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-              </span>
-              <span className="shrink-0 pt-0.5">
-                {getCategoryBadge(log.category)}
-              </span>
-              <span className={`${getLevelColor(log.level)} shrink-0 uppercase select-none font-bold text-[10px] pt-0.5`}>
-                [{log.level}]
-              </span>
-              {log.file && (
-                <span className="text-neutral-500 text-[9px] shrink-0 pt-0.5 select-none" title={`From dual round-robin storage: proxy-${log.file}.log`}>
-                  [F{log.file}]
+              <div className="flex items-center gap-x-2 flex-wrap">
+                <span className="text-neutral-500 select-none font-mono text-[10px]">
+                  {new Date(log.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
                 </span>
-              )}
-              <span className="text-neutral-200 break-all font-mono whitespace-pre-wrap flex-1">
+                {getCategoryBadge(log.category)}
+                <span className={`${getLevelColor(log.level)} uppercase select-none font-bold text-[10px]`}>
+                  [{log.level}]
+                </span>
+                {log.file && (
+                  <span className="text-neutral-500 text-[9px] font-mono select-none" title={`From dual round-robin storage: proxy-${log.file}.log`}>
+                    [F{log.file}]
+                  </span>
+                )}
+              </div>
+              <div className="mt-1 text-neutral-200 break-all font-mono whitespace-pre-wrap leading-relaxed">
                 {getLevelIcon(log.level)}
                 {log.message}
-              </span>
+              </div>
             </div>
           ))
         )}

@@ -182,7 +182,7 @@ function hasRelatedLogs(requestId?: string): boolean {
 }
 
 function shortRequestId(): string {
-  return randomBytes(8).toString("base64url");
+  return randomBytes(8).toString("hex");
 }
 
 function addLog(
@@ -1115,6 +1115,9 @@ async function startServer() {
     if (q.provider) { clauses.push("provider = ?"); params.push(q.provider); }
     if (q.from) { clauses.push("time >= ?"); params.push(new Date(q.from).getTime()); }
     if (q.to) { clauses.push("time <= ?"); params.push(new Date(q.to).getTime()); }
+    if (q.status === "2xx") { clauses.push("status >= 200 AND status < 300"); }
+    else if (q.status === "4xx") { clauses.push("status >= 400 AND status < 500"); }
+    else if (q.status === "5xx") { clauses.push("status >= 500 AND status < 600"); }
     return { clauses, params };
   };
 

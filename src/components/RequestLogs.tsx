@@ -16,6 +16,7 @@ export default function RequestLogs({ virtualKeys, providers, onViewLogs }: Requ
   const [keyFilter, setKeyFilter] = useState("");
   const [providerFilter, setProviderFilter] = useState("");
   const [modelFilter, setModelFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
   const [timeRange, setTimeRange] = useState("all");
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 20;
@@ -36,6 +37,7 @@ export default function RequestLogs({ virtualKeys, providers, onViewLogs }: Requ
     if (keyFilter.trim()) params.set("key", keyFilter.trim());
     if (providerFilter) params.set("provider", providerFilter);
     if (modelFilter.trim()) params.set("model", modelFilter.trim());
+    if (statusFilter) params.set("status", statusFilter);
     if (timeRange !== "all") {
       const now = new Date();
       let from: Date | null = null;
@@ -50,7 +52,7 @@ export default function RequestLogs({ virtualKeys, providers, onViewLogs }: Requ
     params.set("limit", String(PAGE_SIZE));
     if (p > 1) params.set("offset", String((p - 1) * PAGE_SIZE));
     return params.toString();
-  }, [keyFilter, providerFilter, modelFilter, timeRange]);
+  }, [keyFilter, providerFilter, modelFilter, statusFilter, timeRange]);
 
   const fetchLogs = useCallback(async (p: number) => {
     try {
@@ -68,7 +70,7 @@ export default function RequestLogs({ virtualKeys, providers, onViewLogs }: Requ
 
   useEffect(() => {
     fetchLogs(page);
-  }, [timeRange, page]);
+  }, [timeRange, statusFilter, page]);
 
   const handleApplyFilter = async () => {
     setLoading(true);
@@ -121,7 +123,7 @@ export default function RequestLogs({ virtualKeys, providers, onViewLogs }: Requ
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
           <div className="space-y-1">
             <label className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">Key</label>
             <select
@@ -168,6 +170,19 @@ export default function RequestLogs({ virtualKeys, providers, onViewLogs }: Requ
               {TIME_RANGES.map((r) => (
                 <option key={r.id} value={r.id}>{r.label}</option>
               ))}
+            </select>
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">Status</label>
+            <select
+              value={statusFilter}
+              onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+              className="w-full bg-white border border-neutral-200 rounded-lg px-3 py-1.5 text-xs text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400 cursor-pointer"
+            >
+              <option value="">All</option>
+              <option value="2xx">2xx</option>
+              <option value="4xx">4xx</option>
+              <option value="5xx">5xx</option>
             </select>
           </div>
         </div>
