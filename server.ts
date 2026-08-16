@@ -1538,6 +1538,7 @@ async function startServer() {
       if (error.name === "AbortError") {
         if (abortReason === "timeout") {
           logProxy("warn", `[API Proxy Timeout] Upstream timeout after ${timeoutMs}ms (${Date.now() - startTime}ms)`);
+          if (logDetail !== "all") logRequestDetail();
           addRequestLog({
             id: crypto.randomUUID(),
             timestamp: new Date().toISOString(),
@@ -1564,6 +1565,7 @@ async function startServer() {
           return;
         }
         logProxy("warn", `[API Proxy Aborted] Client closed connection (${Date.now() - startTime}ms)`);
+        if (logDetail !== "all") logRequestDetail();
         addRequestLog({
           id: crypto.randomUUID(),
           timestamp: new Date().toISOString(),
@@ -1574,10 +1576,10 @@ async function startServer() {
           path: originalPath,
           method,
           promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalTokens: 0,
-          status: 0,
+          status: 499,
           durationMs: Date.now() - startTime,
-stream: false,
-            error: "client closed connection",
+          stream: false,
+          error: "client closed connection",
             requestId,
             hasDetail: hasRelatedLogs(requestId)
           });
@@ -1585,6 +1587,7 @@ stream: false,
         return;
       }
       logProxy("error", `[API Proxy Error] Forwarding failed: ${error.message} (${Date.now() - startTime}ms)`);
+      if (logDetail !== "all") logRequestDetail();
       addRequestLog({
         id: crypto.randomUUID(),
         timestamp: new Date().toISOString(),
