@@ -1,20 +1,22 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Message, VirtualKey } from "../types";
+import { Message, VirtualKey, Provider } from "../types";
 import { Send, Sparkles, AlertCircle, RefreshCw, Layers, Search, X } from "lucide-react";
 
 interface PlaygroundProps {
   virtualKeys: VirtualKey[];
+  providers: Provider[];
   activeProviderName: string;
   enableVirtualKey?: boolean;
   onStateChange?: (key: string, model: string) => void;
 }
 
-export default function Playground({ virtualKeys, activeProviderName, enableVirtualKey, onStateChange }: PlaygroundProps) {
+export default function Playground({ virtualKeys, providers, activeProviderName, enableVirtualKey, onStateChange }: PlaygroundProps) {
   const [messages, setMessages] = useState<Message[]>([
     { role: "system", content: "You are a helpful assistant talking through the LLM Proxy." }
   ]);
   const [input, setInput] = useState("");
   const [selectedKey, setSelectedKey] = useState<string>(() => (enableVirtualKey && virtualKeys.length > 0) ? virtualKeys[0].key : "");
+  const [selectedProviderId, setSelectedProviderId] = useState<string>("");
   const [models, setModels] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [modelKeyword, setModelKeyword] = useState<string>("");
@@ -27,10 +29,26 @@ export default function Playground({ virtualKeys, activeProviderName, enableVirt
     m.toLowerCase().includes(modelKeyword.toLowerCase())
   );
 
-  // Load models from proxy /v1/models
+  // Load models from proxy /v1/models or from the selected provider's config
   const fetchModels = async () => {
     try {
       setError(null);
+
+      // Direct upstream test mode: models come from the provider config
+      if (selectedProviderId) {
+        const provider = providers.find((p) => p.id === selectedProviderId);
+        const modelList = provider?.models || [];
+        setModels(modelList);
+        if (modelList.length > 0) {
+          if (!modelList.includes(selectedModel)) {
+            setSelectedModel(provider?.defaultModel && modelList.includes(provider.defaultModel) ? provider.defaultModel : modelList[0]);
+          }
+        } else {
+          setSelectedModel("");
+        }
+        return;
+      }
+
       const headers: Record<string, string> = {};
       const activeKey = selectedKey;
       if (activeKey) {
@@ -59,10 +77,10 @@ export default function Playground({ virtualKeys, activeProviderName, enableVirt
     }
   };
 
-  // Fetch models when selectedKey or activeProviderName changes
+  // Fetch models when selectedKey, selectedProviderId or activeProviderName changes
   useEffect(() => {
     fetchModels();
-  }, [selectedKey, activeProviderName, virtualKeys.length]);
+  }, [selectedKey, selectedProviderId, activeProviderName, providers, virtualKeys.length]);
 
   // Report selected key/model up to App for the generated curl command
   useEffect(() => {
@@ -103,12 +121,16 @@ export default function Playground({ virtualKeys, activeProviderName, enableVirt
     setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
 
     try {
+      const isDirectTest = !!selectedProviderId;
       const headers: Record<string, string> = {
         "Content-Type": "application/json"
       };
-      const activeKey = selectedKey;
-      if (activeKey) {
-        headers["Authorization"] = `Bearer ${activeKey}`;
+      // Direct upstream test: apiKey is injected server-side from provider config
+      if (!isDirectTest) {
+        const activeKey = selectedKey;
+        if (activeKey) {
+          headers["Authorization"] = `Bearer ${activeKey}`;
+        }
       }
 
       const body = {
@@ -117,7 +139,9 @@ export default function Playground({ virtualKeys, activeProviderName, enableVirt
         stream: stream
       };
 
-      const response = await fetch("/v1/chat/completions", {
+      const endpoint = isDirectTest ? `/api/providers/${selectedProviderId}/chat/completions` : "/v1/chat/completions";
+
+      const response = await fetch(endpoint, {
         method: "POST",
         headers,
         body: JSON.stringify(body)
@@ -233,10 +257,37 @@ export default function Playground({ virtualKeys, activeProviderName, enableVirt
           </div>
         </div>
 
-        {/* Control Grid: Virtual Key & Model Selectors (Stacked on mobile, 2 columns on desktop when Virtual Key enabled) */}
-        <div className={`grid grid-cols-1 ${enableVirtualKey ? "sm:grid-cols-2" : ""} gap-3 mt-2.5 pt-2.5 border-t border-neutral-200/80 text-xs`}>
-          {/* Key selector - Only show when enableVirtualKey is enabled */}
-          {enableVirtualKey ? (
+        {/* Control Grid: Provider, Virtual Key & Model Selectors (Stacked on mobile) */}
+        <div className={`grid grid-cols-1 ${enableVirtualKey && !selectedProviderId ? "sm:grid-cols-2" : ""} gap-3 mt-2.5 pt-2.5 border-t border-neutral-200/80 text-xs`}>
+          {/* Provider selector - empty means LLM Proxy route */}
+          <div className="flex flex-col space-y-1">
+            <div className="flex items-center justify-between text-[11px] font-bold text-neutral-500 uppercase tracking-wider">
+              <span>Upstream Target</span>
+              <span className="text-neutral-400 lowercase font-normal">
+                {selectedProviderId
+                  ? <span className="text-emerald-600 font-semibold">direct test</span>
+                  : <span className="text-blue-600 font-semibold">llm proxy</span>}
+              </span>
+            </div>
+            <select
+              value={selectedProviderId}
+              onChange={(e) => {
+                setSelectedProviderId(e.target.value);
+                setSelectedModel("");
+              }}
+              className="w-full bg-white border border-neutral-300 rounded-xl px-3 py-2 sm:py-1.5 text-xs sm:text-sm text-neutral-800 font-medium outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 shadow-2xs transition-all cursor-pointer"
+            >
+              <option value="">LLM Proxy (routed)</option>
+              {providers.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} {p.enabled ? "(active)" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Key selector - Only show in proxy route mode when enableVirtualKey is enabled */}
+          {enableVirtualKey && !selectedProviderId ? (
             <div className="flex flex-col space-y-1">
               <label className="text-[11px] font-bold text-neutral-500 uppercase tracking-wider flex items-center justify-between">
                 <span>Virtual Key (Auth)</span>
@@ -266,8 +317,11 @@ export default function Playground({ virtualKeys, activeProviderName, enableVirt
             <div className="flex items-center justify-between text-[11px] font-bold text-neutral-500 uppercase tracking-wider">
               <div className="flex items-center space-x-1.5">
                 <span>Target Model</span>
-                {!enableVirtualKey && (
+                {!enableVirtualKey && !selectedProviderId && (
                   <span className="text-[10px] bg-neutral-200/80 text-neutral-600 px-1.5 py-0.5 rounded font-medium lowercase">direct proxy mode</span>
+                )}
+                {selectedProviderId && (
+                  <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-medium lowercase">from provider config</span>
                 )}
               </div>
               <span className="text-neutral-400 lowercase font-normal">{models.length} available</span>
@@ -360,7 +414,7 @@ export default function Playground({ virtualKeys, activeProviderName, enableVirt
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder={models.length === 0 ? "Enable a provider to start typing..." : `Message via ${activeProviderName}...`}
+          placeholder={models.length === 0 ? "Enable a provider to start typing..." : `Message via ${selectedProviderId ? (providers.find((p) => p.id === selectedProviderId)?.name || "provider") : activeProviderName}...`}
           disabled={models.length === 0 || isLoading}
           className="flex-1 border border-neutral-250 rounded-xl px-4 py-2 text-sm text-neutral-800 placeholder-neutral-400 outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 disabled:bg-neutral-100 disabled:cursor-not-allowed"
         />

@@ -377,7 +377,7 @@ export default function App() {
               </div>
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
                 <div className="lg:col-span-2">
-                  <Playground virtualKeys={virtualKeys} activeProviderName={activeProviderName} enableVirtualKey={enableVirtualKey} onStateChange={(key, model) => { setPlaygroundKey(key); setPlaygroundModel(model); }} />
+                  <Playground virtualKeys={virtualKeys} providers={providers} activeProviderName={activeProviderName} enableVirtualKey={enableVirtualKey} onStateChange={(key, model) => { setPlaygroundKey(key); setPlaygroundModel(model); }} />
                 </div>
                 <div className="bg-white border border-neutral-200 rounded-2xl p-5 shadow-sm space-y-3.5">
                   <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-600 flex items-center space-x-1.5">

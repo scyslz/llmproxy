@@ -1206,6 +1206,80 @@ async function startServer() {
     });
   });
 
+  // Playground direct upstream test endpoint (bypasses proxy routing & virtual keys)
+  app.post("/api/providers/:id/chat/completions", async (req, res) => {
+    const provider = cfg.providers.find(p => p.id === req.params.id);
+    if (!provider) {
+      return res.status(404).json({ error: "Provider not found" });
+    }
+
+    const startTime = Date.now();
+    const logDetail = cfg.logDetail || "basic";
+    const logDirect = (level: "info" | "warn" | "error", message: string) => {
+      if (logDetail !== "off") addLog(level, message, "proxy");
+    };
+
+    const cleanBaseUrl = provider.baseUrl.trim().replace(/\/+$/, "");
+    let endpointBase = cleanBaseUrl;
+    if (
+      !cleanBaseUrl.endsWith("/v1") &&
+      !cleanBaseUrl.endsWith("/openai") &&
+      !cleanBaseUrl.endsWith("/v1beta") &&
+      !cleanBaseUrl.endsWith("/api") &&
+      !cleanBaseUrl.endsWith("/v4") &&
+      !cleanBaseUrl.endsWith("/v2") &&
+      !cleanBaseUrl.endsWith("/v3")
+    ) {
+      endpointBase = `${cleanBaseUrl}/v1`;
+    }
+    const configuredEp = provider.openaiEndpoint?.trim();
+    const targetUrl = configuredEp
+      ? `${cleanBaseUrl}${configuredEp.startsWith("/") ? configuredEp : `/${configuredEp}`}`
+      : `${endpointBase}/chat/completions`;
+
+    const headers = new Headers();
+    headers.set("Content-Type", "application/json");
+    if (provider.apiKey) {
+      headers.set("Authorization", `Bearer ${provider.apiKey}`);
+    }
+
+    logDirect("info", `[Provider Test] ${provider.name} chat completions initiated -> ${targetUrl}`);
+
+    try {
+      const response = await fetch(targetUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(req.body || {})
+      });
+
+      res.status(response.status);
+      response.headers.forEach((value, key) => {
+        const lowerKey = key.toLowerCase();
+        if (lowerKey !== "transfer-encoding" && lowerKey !== "content-encoding" && lowerKey !== "content-length") {
+          res.setHeader(key, value);
+        }
+      });
+
+      if (response.body) {
+        const reader = response.body.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          res.write(value);
+        }
+      }
+      res.end();
+      logDirect("info", `[Provider Test] ${provider.name} completed with status ${response.status} (${Date.now() - startTime}ms)`);
+    } catch (err: any) {
+      logDirect("error", `[Provider Test] ${provider.name} failed: ${err.message}`);
+      if (res.headersSent) {
+        res.destroy(err);
+      } else {
+        res.status(502).json({ error: `Provider test failed: ${err.message}` });
+      }
+    }
+  });
+
   // 5. General Forward Handler (Post/Get/Put proxy to selected Provider)
   // Standard OpenAI paths like `/v1/chat/completions` or `/v1/embeddings`
   app.all("/v1/*", async (req, res) => {
