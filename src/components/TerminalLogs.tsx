@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { SystemLog } from "../types";
-import { Trash2, AlertCircle, Info, AlertTriangle, RefreshCw, FileText, Filter } from "lucide-react";
+import { Trash2, AlertCircle, Info, AlertTriangle, RefreshCw, FileText, Filter, X, FileSearch } from "lucide-react";
 
 interface TerminalLogsProps {
   logs: SystemLog[];
@@ -8,6 +8,8 @@ interface TerminalLogsProps {
   onRefresh: () => void;
   isPolling: boolean;
   setIsPolling: (polling: boolean) => void;
+  viewRequestId?: string;
+  onClearView?: () => void;
 }
 
 interface LogStatus {
@@ -18,10 +20,11 @@ interface LogStatus {
   totalLogs: number;
 }
 
-export default function TerminalLogs({ logs, onClear, onRefresh, isPolling, setIsPolling }: TerminalLogsProps) {
+export default function TerminalLogs({ logs, onClear, onRefresh, isPolling, setIsPolling, viewRequestId, onClearView }: TerminalLogsProps) {
   const [levelFilter, setLevelFilter] = useState<"all" | "info" | "warn" | "error">("all");
   const [categoryFilter, setCategoryFilter] = useState<"all" | "proxy" | "system">("all");
   const [logStatus, setLogStatus] = useState<LogStatus | null>(null);
+  const [viewLogs, setViewLogs] = useState<SystemLog[] | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const fetchStatus = async () => {
@@ -39,10 +42,32 @@ export default function TerminalLogs({ logs, onClear, onRefresh, isPolling, setI
   }, [logs]);
 
   useEffect(() => {
+    if (!viewRequestId) {
+      setViewLogs(null);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch(`/api/logs?requestId=${encodeURIComponent(viewRequestId)}&limit=200`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const entries = Array.isArray(data) ? data : data?.logs ?? [];
+        if (!cancelled) setViewLogs(entries);
+      } catch {}
+    };
+    load();
+    const t = setInterval(load, 2500);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [viewRequestId]);
+
+  useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs, levelFilter, categoryFilter]);
 
-  const filteredLogs = logs.filter((log) => {
+  const displayLogs = viewRequestId ? (viewLogs ?? []) : logs;
+
+  const filteredLogs = displayLogs.filter((log) => {
     if (levelFilter !== "all" && log.level !== levelFilter) return false;
     if (categoryFilter !== "all") {
       const cat = log.category || "system";
@@ -132,6 +157,25 @@ export default function TerminalLogs({ logs, onClear, onRefresh, isPolling, setI
           </button>
         </div>
       </div>
+
+      {/* Request Detail View Banner */}
+      {viewRequestId && (
+        <div className="bg-amber-50/60 border-b border-amber-200 px-4 py-2 flex items-center justify-between gap-2">
+          <div className="flex items-center space-x-2 text-[11px] text-amber-800">
+            <FileSearch className="w-3.5 h-3.5" />
+            <span className="font-bold">Viewing logs for request</span>
+            <code className="font-mono text-[10px] bg-white border border-amber-200 px-1.5 py-0.5 rounded">{viewRequestId}</code>
+            <span className="text-amber-700/80">({filteredLogs.length} entries)</span>
+          </div>
+          <button
+            onClick={onClearView}
+            className="inline-flex items-center space-x-1 px-2 py-1 rounded-lg text-[10px] font-bold bg-white border border-amber-200 text-amber-800 hover:bg-amber-100 transition-colors cursor-pointer"
+          >
+            <X className="w-3 h-3" />
+            <span>Exit request view</span>
+          </button>
+        </div>
+      )}
 
       {/* Terminal Filter Bar */}
       <div className="bg-neutral-50/70 px-4 py-2 border-b border-neutral-200 flex flex-wrap items-center justify-between gap-2 text-[11px]">

@@ -24,6 +24,7 @@ export interface SystemLog {
   category?: "system" | "proxy";
   file?: number;
   message: string;
+  requestId?: string;
 }
 
 export interface LogStatus {
@@ -51,6 +52,8 @@ export interface RequestLog {
   durationMs: number;
   stream: boolean;
   error?: string;
+  requestId?: string;
+  hasDetail?: boolean;
 }
 
 export interface RequestLogStats {
@@ -64,9 +67,8 @@ export interface RequestLogStats {
 export interface Settings {
   enableVirtualKey: boolean;
   enableAdminAuth: boolean;
-  debug: boolean;
-  logRequestBody?: boolean;
-  logResponseBody?: boolean;
+  logDetail: "off" | "basic" | "error" | "all";
+  logBody: boolean;
   maxLogSizeMB: number;
   activeLogFile?: number;
 }

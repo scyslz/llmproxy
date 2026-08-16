@@ -1,14 +1,15 @@
 import { useState, useEffect, useCallback } from "react";
 import { RequestLog, RequestLogStats, VirtualKey, Provider } from "../types";
-import { RefreshCw, Filter, Activity, ArrowDownToLine, ArrowUpFromLine, Database, Cpu } from "lucide-react";
+import { RefreshCw, Filter, Activity, ArrowDownToLine, ArrowUpFromLine, Database, Cpu, FileSearch } from "lucide-react";
 import { apiFetch } from "../lib/api";
 
 interface RequestLogsProps {
   virtualKeys: VirtualKey[];
   providers: Provider[];
+  onViewLogs?: (requestId: string, hasDetail: boolean) => void;
 }
 
-export default function RequestLogs({ virtualKeys, providers }: RequestLogsProps) {
+export default function RequestLogs({ virtualKeys, providers, onViewLogs }: RequestLogsProps) {
   const [logs, setLogs] = useState<RequestLog[]>([]);
   const [stats, setStats] = useState<RequestLogStats | null>(null);
   const [loading, setLoading] = useState(false);
@@ -217,6 +218,7 @@ export default function RequestLogs({ virtualKeys, providers }: RequestLogsProps
                   <th className="py-3 px-3 text-right">Total</th>
                   <th className="py-3 px-3 text-center">Status</th>
                   <th className="py-3 pl-3 pr-5 text-right">Duration</th>
+                  <th className="py-3 pl-3 pr-5 text-center">Logs</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-100 text-xs text-neutral-700">
@@ -244,6 +246,24 @@ export default function RequestLogs({ virtualKeys, providers }: RequestLogsProps
                       {log.stream && <span className="ml-1 text-[9px] text-neutral-400">stream</span>}
                     </td>
                     <td className="py-2.5 pl-3 pr-5 text-right font-mono text-neutral-500 whitespace-nowrap">{log.durationMs}ms</td>
+                    <td className="py-2.5 pl-3 pr-5 text-center whitespace-nowrap">
+                      {log.requestId && onViewLogs ? (
+                        <button
+                          onClick={() => onViewLogs(log.requestId!, !!log.hasDetail)}
+                          title={log.hasDetail ? "View related log details" : "View related summary logs (no detailed logs were recorded for this request)"}
+                          className={`inline-flex items-center space-x-1 px-2 py-1 rounded-lg text-[10px] font-bold transition-colors cursor-pointer ${
+                            log.hasDetail
+                              ? "bg-neutral-900 text-white hover:bg-neutral-800"
+                              : "bg-neutral-100 text-neutral-500 hover:bg-neutral-200 border border-neutral-200"
+                          }`}
+                        >
+                          <FileSearch className="w-3 h-3" />
+                          <span>{log.hasDetail ? "Detail" : "Summary"}</span>
+                        </button>
+                      ) : (
+                        <span className="text-neutral-300 text-[10px]">—</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

@@ -21,8 +21,8 @@ export default function App() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [virtualKeys, setVirtualKeys] = useState<VirtualKey[]>([]);
   const [enableVirtualKey, setEnableVirtualKey] = useState(false);
-  const [debug, setDebug] = useState(true);
   const [logs, setLogs] = useState<SystemLog[]>([]);
+  const [viewRequestId, setViewRequestId] = useState<string | null>(null);
   
   // Loading & Error states
   const [isLoading, setIsLoading] = useState(true);
@@ -90,7 +90,6 @@ export default function App() {
       setVirtualKeys(keysData);
       setEnableVirtualKey(settingsData.enableVirtualKey);
       setEnableAdminAuth(settingsData.enableAdminAuth || false);
-      setDebug(settingsData.debug);
       const logsData = Array.isArray(logsDataRaw) ? logsDataRaw : logsDataRaw?.logs ?? [];
       setLogs(logsData);
       if (logsData.length > 0) lastLogIdRef.current = logsData[logsData.length - 1].id ?? 0;
@@ -428,6 +427,8 @@ export default function App() {
                 onRefresh={handleRefreshLogs}
                 isPolling={isPollingLogs}
                 setIsPolling={setIsPollingLogs}
+                viewRequestId={viewRequestId || undefined}
+                onClearView={() => setViewRequestId(null)}
               />
             </motion.div>
           )}
@@ -445,7 +446,14 @@ export default function App() {
                 <h3 className="font-display font-semibold text-neutral-800 text-base">Request Usage</h3>
                 <p className="text-xs text-neutral-500">Per-request token usage (prompt / cached / completion), key and model attribution, filterable by key and time range</p>
               </div>
-              <RequestLogs virtualKeys={virtualKeys} providers={providers} />
+              <RequestLogs
+                  virtualKeys={virtualKeys}
+                  providers={providers}
+                  onViewLogs={(rid) => {
+                    setViewRequestId(rid);
+                    setActiveTab("logs");
+                  }}
+                />
             </motion.div>
           )}
 
@@ -462,15 +470,6 @@ export default function App() {
                 onToggleVirtualKey={handleToggleVirtualKey}
                 enableAdminAuth={enableAdminAuth}
                 onUpdateAdminAuth={handleUpdateAdminAuth}
-                debug={debug}
-                onToggleDebug={async (val) => {
-                  await apiFetch("/api/settings", {
-                    method: "PUT",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ debug: val })
-                  });
-                  setDebug(val);
-                }}
                 onLogout={handleLogout}
               />
             </motion.div>

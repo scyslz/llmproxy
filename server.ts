@@ -3,6 +3,7 @@ import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { DatabaseSync } from "node:sqlite";
+import { randomBytes } from "node:crypto";
 
 interface Provider {
   id: string;
@@ -86,6 +87,8 @@ interface RequestLog {
   durationMs: number;
   stream: boolean;
   error?: string;
+  requestId?: string;
+  hasDetail?: boolean;
 }
 
 interface Config {
@@ -93,9 +96,8 @@ interface Config {
   enableVirtualKey: boolean;
   enableAdminAuth: boolean;
   adminPassword?: string;
-  debug: boolean;
-  logRequestBody?: boolean;
-  logResponseBody?: boolean;
+  logDetail?: "off" | "basic" | "error" | "all";
+  logBody?: boolean;
   maxLogSizeMB?: number;
   maxRequestLogs?: number;
   activeLogFile?: number;
@@ -111,9 +113,8 @@ const DEFAULT_CONFIG: Config = {
   enableVirtualKey: false,
   enableAdminAuth: false,
   adminPassword: "admin",
-  debug: true,
-  logRequestBody: true,
-  logResponseBody: false,
+  logDetail: "basic",
+  logBody: false,
   maxLogSizeMB: 2,
   maxRequestLogs: 10000,
   activeLogFile: 1,
@@ -179,11 +180,12 @@ const systemLogs: Array<{ timestamp: string; level: "info" | "warn" | "error"; c
 function addLog(
   level: "info" | "warn" | "error",
   message: string,
-  category: "system" | "proxy" = "system"
+  category: "system" | "proxy" = "system",
+  requestId?: string
 ) {
   const timestamp = new Date().toISOString();
   let activeNum = (typeof cfg !== "undefined" && cfg?.activeLogFile) ? cfg.activeLogFile : 1;
-  const logEntry = { timestamp, level, category, file: activeNum, message };
+  const logEntry = { timestamp, level, category, file: activeNum, message, requestId };
 
   systemLogs.push(logEntry);
   if (systemLogs.length > 200) {
@@ -214,9 +216,9 @@ function addLog(
     if (!sysDb) initSystemLogDb();
     if (sysDb) {
       const stmt = sysLogInsertStmt || (sysLogInsertStmt = sysDb.prepare(
-        "INSERT INTO system_logs (time, level, category, file, message) VALUES (?, ?, ?, ?, ?)"
+        "INSERT INTO system_logs (time, level, category, file, message, request_id) VALUES (?, ?, ?, ?, ?, ?)"
       ));
-      stmt.run(new Date(timestamp).getTime(), level, category || null, logEntry.file || null, message);
+      stmt.run(new Date(timestamp).getTime(), level, category || null, logEntry.file || null, message, requestId || null);
       const row = sysDb.prepare("SELECT COUNT(*) AS c FROM system_logs").get() as any;
       const count = row ? row.c : 0;
       if (count > SYSTEM_LOG_LIMIT) {
@@ -302,14 +304,14 @@ function importDiskLogsToSqlite() {
   const rows = sysDb.prepare("SELECT time, message FROM system_logs").all() as any[];
   for (const r of rows) existing.add(`${r.time}:${r.message}`);
   const insert = sysDb.prepare(
-    "INSERT INTO system_logs (time, level, category, file, message) VALUES (?, ?, ?, ?, ?)"
+    "INSERT INTO system_logs (time, level, category, file, message, request_id) VALUES (?, ?, ?, ?, ?, ?)"
   );
   let added = 0;
   for (const l of all) {
     const t = new Date(l.timestamp).getTime();
     if (existing.has(`${t}:${l.message}`)) continue;
     try {
-      insert.run(t, l.level, l.category || null, l.file || null, l.message);
+      insert.run(t, l.level, l.category || null, l.file || null, l.message, l.requestId || null);
       added++;
     } catch {}
   }
@@ -337,6 +339,12 @@ function openSystemLogDb(num: number) {
       CREATE INDEX IF NOT EXISTS idx_syslog_time ON system_logs(time);
       CREATE INDEX IF NOT EXISTS idx_syslog_level ON system_logs(level);
     `);
+    try {
+      const cols = sysDb.prepare("PRAGMA table_info(system_logs)").all() as any[];
+      if (!cols.some(c => c.name === "request_id")) {
+        sysDb.exec("ALTER TABLE system_logs ADD COLUMN request_id TEXT");
+      }
+    } catch {}
     importDiskLogsToSqlite();
     sysDb.prepare(`
       DELETE FROM system_logs WHERE id NOT IN (
@@ -386,7 +394,8 @@ function systemLogRowToApi(row: any) {
     level: row.level,
     category: row.category || "system",
     file: row.file,
-    message: row.message
+    message: row.message,
+    requestId: row.request_id || undefined
   };
 }
 
@@ -424,6 +433,15 @@ function initRequestLogDb() {
       CREATE INDEX IF NOT EXISTS idx_req_key ON request_logs(key_name);
       CREATE INDEX IF NOT EXISTS idx_req_model ON request_logs(model);
     `);
+    try {
+      const cols = db.prepare("PRAGMA table_info(request_logs)").all() as any[];
+      if (!cols.some(c => c.name === "request_id")) {
+        db.exec("ALTER TABLE request_logs ADD COLUMN request_id TEXT");
+      }
+      if (!cols.some(c => c.name === "has_detail")) {
+        db.exec("ALTER TABLE request_logs ADD COLUMN has_detail INTEGER NOT NULL DEFAULT 0");
+      }
+    } catch {}
     const row = db.prepare("SELECT COUNT(*) AS c FROM request_logs").get() as any;
     requestLogsCount = row ? row.c : 0;
     addLog("info", `Request log database ready at ${REQUEST_DB_FILE} (${requestLogsCount} existing entries).`);
@@ -446,8 +464,8 @@ function addRequestLog(log: RequestLog) {
       INSERT INTO request_logs
         (id, time, key_name, key_id, model, provider, path, method,
          prompt_tokens, completion_tokens, cached_tokens, total_tokens,
-         status, duration_ms, stream, error)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         status, duration_ms, stream, error, request_id, has_detail)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     insert.run(
       log.id,
@@ -465,7 +483,9 @@ function addRequestLog(log: RequestLog) {
       log.status || 0,
       log.durationMs || 0,
       log.stream ? 1 : 0,
-      log.error || null
+      log.error || null,
+      log.requestId || null,
+      log.hasDetail ? 1 : 0
     );
     requestLogsCount++;
     const max = (typeof cfg !== "undefined" && cfg?.maxRequestLogs) ? cfg.maxRequestLogs : 10000;
@@ -496,7 +516,9 @@ function dbRowToRequestLog(row: any): RequestLog {
     status: row.status || 0,
     durationMs: row.duration_ms || 0,
     stream: row.stream === 1,
-    error: row.error || undefined
+    error: row.error || undefined,
+    requestId: row.request_id || undefined,
+    hasDetail: row.has_detail === 1
   };
 }
 
@@ -888,9 +910,8 @@ async function startServer() {
     res.json({
       enableVirtualKey: cfg.enableVirtualKey,
       enableAdminAuth: cfg.enableAdminAuth,
-      debug: cfg.debug,
-      logRequestBody: cfg.logRequestBody !== undefined ? cfg.logRequestBody : true,
-      logResponseBody: cfg.logResponseBody === true,
+      logDetail: cfg.logDetail || "basic",
+      logBody: cfg.logBody === true,
       maxLogSizeMB: cfg.maxLogSizeMB || 2,
       maxRequestLogs: cfg.maxRequestLogs || 10000,
       activeLogFile: cfg.activeLogFile || 1
@@ -913,14 +934,11 @@ async function startServer() {
       adminSessions.clear();
       addLog("info", "Admin password updated. All existing sessions cleared.", "system");
     }
-    if (typeof req.body.debug === "boolean") {
-      cfg.debug = req.body.debug;
+    if (typeof req.body.logDetail === "string" && ["off", "basic", "error", "all"].includes(req.body.logDetail)) {
+      cfg.logDetail = req.body.logDetail;
     }
-    if (typeof req.body.logRequestBody === "boolean") {
-      cfg.logRequestBody = req.body.logRequestBody;
-    }
-    if (typeof req.body.logResponseBody === "boolean") {
-      cfg.logResponseBody = req.body.logResponseBody;
+    if (typeof req.body.logBody === "boolean") {
+      cfg.logBody = req.body.logBody;
     }
     if (typeof req.body.maxLogSizeMB === "number" && req.body.maxLogSizeMB > 0) {
       cfg.maxLogSizeMB = req.body.maxLogSizeMB;
@@ -929,13 +947,12 @@ async function startServer() {
       cfg.maxRequestLogs = req.body.maxRequestLogs;
     }
     saveConfig(cfg);
-    addLog("info", `Settings updated: enableVirtualKey=${cfg.enableVirtualKey}, enableAdminAuth=${cfg.enableAdminAuth}, debug=${cfg.debug}, logRequestBody=${cfg.logRequestBody}, logResponseBody=${cfg.logResponseBody}, maxLogSizeMB=${cfg.maxLogSizeMB}`, "system");
+    addLog("info", `Settings updated: enableVirtualKey=${cfg.enableVirtualKey}, enableAdminAuth=${cfg.enableAdminAuth}, logDetail=${cfg.logDetail}, logBody=${cfg.logBody}, maxLogSizeMB=${cfg.maxLogSizeMB}`, "system");
     res.json({
       enableVirtualKey: cfg.enableVirtualKey,
       enableAdminAuth: cfg.enableAdminAuth,
-      debug: cfg.debug,
-      logRequestBody: cfg.logRequestBody !== undefined ? cfg.logRequestBody : true,
-      logResponseBody: cfg.logResponseBody === true,
+      logDetail: cfg.logDetail || "basic",
+      logBody: cfg.logBody === true,
       maxLogSizeMB: cfg.maxLogSizeMB || 2,
       maxRequestLogs: cfg.maxRequestLogs || 10000,
       activeLogFile: cfg.activeLogFile || 1
@@ -951,7 +968,7 @@ async function startServer() {
     if (!name) {
       return res.status(400).json({ error: "Key name is required" });
     }
-    const randomHex = Array.from({ length: 16 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
+    const randomHex = randomBytes(32).toString("base64url");
     const newKey: VirtualKey = {
       key: `sk-proxy-${randomHex}`,
       name,
@@ -987,6 +1004,7 @@ async function startServer() {
     if (!Number.isNaN(sinceId) && sinceId > 0) { clauses.push("id > ?"); params.push(sinceId); }
     if (q.level) { clauses.push("level = ?"); params.push(q.level); }
     if (q.category) { clauses.push("category = ?"); params.push(q.category); }
+    if (q.requestId) { clauses.push("request_id = ?"); params.push(String(q.requestId)); }
 
     if (sysDb) {
       try {
@@ -1183,8 +1201,9 @@ async function startServer() {
     const startTime = Date.now();
     const originalPath = req.url;
     const method = req.method;
+    const requestId = crypto.randomUUID();
 
-    addLog("info", `[API Proxy] ${method} ${originalPath} initiated`, "proxy");
+    addLog("info", `[API Proxy] ${method} ${originalPath} initiated`, "proxy", requestId);
 
     // Determine target providers allowed by Virtual Key
     let allowedProviders = cfg.providers;
@@ -1196,9 +1215,9 @@ async function startServer() {
 
     if (cfg.enableVirtualKey) {
       if (cfg.keys.length === 0) {
-        addLog("warn", `Virtual key mode enabled but no keys configured. Proceeding with default routing.`, "proxy");
+        addLog("warn", `Virtual key mode enabled but no keys configured. Proceeding with default routing.`, "proxy", requestId);
       } else if (!vKey) {
-        addLog("error", `Virtual key validation failed for request to ${originalPath}`, "proxy");
+        addLog("error", `Virtual key validation failed for request to ${originalPath}`, "proxy", requestId);
         return res.status(401).json({ error: "Unauthorized: Invalid or missing virtual key" });
       }
     }
@@ -1213,7 +1232,7 @@ async function startServer() {
     // Select active provider
     const provider = allowedProviders.find(p => p.enabled);
     if (!provider) {
-      addLog("error", `No active provider enabled or allowed for request to ${originalPath}`, "proxy");
+      addLog("error", `No active provider enabled or allowed for request to ${originalPath}`, "proxy", requestId);
       return res.status(503).json({ error: "Service Unavailable: No provider enabled/authorized" });
     }
 
@@ -1228,11 +1247,14 @@ async function startServer() {
       let modelOK = provider.models.includes(reqModel);
       if (!modelOK && provider.models.length > 0) {
         const fallbackModel = provider.defaultModel || provider.models[0];
-        addLog(
-          "warn",
-          `Model '${reqModel}' not supported by provider '${provider.name}'. Substituting with fallback '${fallbackModel}'.`,
-          "proxy"
-        );
+        if (cfg.logDetail === "all") {
+          addLog(
+            "warn",
+            `Model '${reqModel}' not supported by provider '${provider.name}'. Substituting with fallback '${fallbackModel}'.`,
+            "proxy",
+            requestId
+          );
+        }
         reqBody = { ...reqBody, model: fallbackModel };
         reqModel = fallbackModel;
       }
@@ -1263,21 +1285,30 @@ async function startServer() {
       ? `${cleanBaseUrl}${configuredEp.startsWith("/") ? configuredEp : `/${configuredEp}`}`
       : `${endpointBase}${cleanSubPath}`;
 
-    addLog(
-      "info",
-      `[API Proxy Forward] ${method} ${originalPath} -> ${provider.name} (${reqModel || "default"})${virtualKeyUsed ? ` [Key: ${virtualKeyUsed}]` : ""}`,
-      "proxy"
-    );
+    const logDetail = cfg.logDetail || "basic";
+    const pathRewritten =
+      configuredEp !== undefined &&
+      configuredEp.trim() !== "" &&
+      configuredEp !== cleanSubPath;
 
-    const shouldLogReq = cfg.logRequestBody !== undefined ? cfg.logRequestBody : cfg.debug;
-    if (cfg.debug) {
+    if (logDetail !== "off") {
+      const forwardSuffix = `${method} ${originalPath} -> ${provider.name} (${reqModel || "default"})${virtualKeyUsed ? ` [Key: ${virtualKeyUsed}]` : ""}${pathRewritten ? ` => ${configuredEp}` : ""}`;
+      addLog("info", `[API Proxy Forward] ${forwardSuffix}`, "proxy", requestId);
+    }
+
+    const shouldLogBody = cfg.logBody === true;
+    const logRequestDetail = () => {
       const reqHeaders = Object.entries(req.headers)
         .map(([k, v]) => `${k}: ${k.toLowerCase() === "authorization" ? "[redacted]" : v}`)
         .join(" | ");
-      addLog("info", `[API Proxy Request Headers] ${reqHeaders}`, "proxy");
-    }
-    if (shouldLogReq && (method === "POST" || method === "PUT")) {
-      addLog("info", `[API Proxy Request Body] ${JSON.stringify(reqBody)}`, "proxy");
+      addLog("info", `[API Proxy Request Headers] ${reqHeaders}`, "proxy", requestId);
+      addLog("info", `[API Proxy Request URL] ${method} ${targetUrl}`, "proxy", requestId);
+      if (shouldLogBody && (method === "POST" || method === "PUT")) {
+        addLog("info", `[API Proxy Request Body] ${JSON.stringify(reqBody)}`, "proxy", requestId);
+      }
+    };
+    if (logDetail === "all") {
+      logRequestDetail();
     }
 
     const concurrencyLimit = provider.concurrency || 0;
@@ -1291,6 +1322,7 @@ async function startServer() {
     let abortReason: "timeout" | "client_close" | null = null;
     const timeoutMs = provider.timeout || 0;
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let detailActive = false;
 
     try {
       // Setup headers
@@ -1320,7 +1352,9 @@ async function startServer() {
       });
       if (timeoutId) clearTimeout(timeoutId);
 
-      addLog("info", `[API Proxy Complete] Status ${response.status} ${response.statusText} (${Date.now() - startTime}ms) -> ${provider.name}`, "proxy");
+      if (logDetail !== "off") {
+        addLog("info", `[API Proxy Complete] Status ${response.status} ${response.statusText} (${Date.now() - startTime}ms) -> ${provider.name}`, "proxy", requestId);
+      }
 
       // Pass along response headers except transfer-encoding/content-encoding
       res.status(response.status);
@@ -1333,11 +1367,24 @@ async function startServer() {
 
       // Handle stream or full body, capturing token usage from the response
       const isStream = (response.headers.get("content-type") || "").includes("text/event-stream");
-      const shouldLogRes = cfg.logResponseBody === true;
+      const detailActiveSet = logDetail === "all" || (logDetail === "error" && !response.ok);
+      detailActive = detailActiveSet;
+      const shouldLogBodyRes = detailActive && shouldLogBody;
       let resBodyBuffer = "";
       const decoder = new TextDecoder("utf-8");
       const usageParser = new SseUsageParser();
       let nonStreamBody = "";
+
+      if (detailActive) {
+        if (logDetail === "error") {
+          logRequestDetail();
+        }
+        const respHeaders: string[] = [];
+        response.headers.forEach((value, key) => {
+          if (key.toLowerCase() !== "set-cookie") respHeaders.push(`${key}: ${value}`);
+        });
+        addLog("info", `[API Proxy Response Headers] ${respHeaders.join(" | ")}`, "proxy", requestId);
+      }
 
       if (response.body) {
         const reader = response.body.getReader();
@@ -1351,19 +1398,12 @@ async function startServer() {
           } else {
             nonStreamBody += text;
           }
-          if (shouldLogRes) {
+          if (shouldLogBodyRes) {
             resBodyBuffer += text;
           }
         }
-        if (shouldLogRes && resBodyBuffer) {
-          addLog("info", `[API Proxy Response Body] ${resBodyBuffer}`, "proxy");
-        }
-        if (cfg.debug) {
-          const respHeaders: string[] = [];
-          response.headers.forEach((value, key) => {
-            if (key.toLowerCase() !== "set-cookie") respHeaders.push(`${key}: ${value}`);
-          });
-          addLog("info", `[API Proxy Response Headers] ${respHeaders.join(" | ")}`, "proxy");
+        if (shouldLogBodyRes && resBodyBuffer) {
+          addLog("info", `[API Proxy Response Body] ${resBodyBuffer}`, "proxy", requestId);
         }
       }
       res.end();
@@ -1406,13 +1446,16 @@ async function startServer() {
         totalTokens,
         status: response.status,
         durationMs: Date.now() - startTime,
-        stream: isStream
+        stream: isStream,
+        requestId,
+        hasDetail: detailActive
       });
     } catch (error: any) {
       if (timeoutId) clearTimeout(timeoutId);
       if (error.name === "AbortError") {
         if (abortReason === "timeout") {
-          addLog("warn", `[API Proxy Timeout] Upstream timeout after ${timeoutMs}ms (${Date.now() - startTime}ms)`, "proxy");
+          detailActive = logDetail === "all" || logDetail === "error";
+          addLog("warn", `[API Proxy Timeout] Upstream timeout after ${timeoutMs}ms (${Date.now() - startTime}ms)`, "proxy", requestId);
           addRequestLog({
             id: crypto.randomUUID(),
             timestamp: new Date().toISOString(),
@@ -1426,7 +1469,9 @@ async function startServer() {
             status: 504,
             durationMs: Date.now() - startTime,
             stream: false,
-            error: "upstream timeout"
+            error: "upstream timeout",
+            requestId,
+            hasDetail: detailActive
           });
           if (sem) sem.release();
           if (res.headersSent) {
@@ -1436,7 +1481,8 @@ async function startServer() {
           }
           return;
         }
-        addLog("warn", `[API Proxy Aborted] Client closed connection (${Date.now() - startTime}ms)`, "proxy");
+        detailActive = logDetail === "all" || logDetail === "error";
+        addLog("warn", `[API Proxy Aborted] Client closed connection (${Date.now() - startTime}ms)`, "proxy", requestId);
         addRequestLog({
           id: crypto.randomUUID(),
           timestamp: new Date().toISOString(),
@@ -1450,12 +1496,15 @@ async function startServer() {
           status: 0,
           durationMs: Date.now() - startTime,
           stream: false,
-          error: "client closed connection"
+          error: "client closed connection",
+          requestId,
+          hasDetail: detailActive
         });
         if (sem) sem.release();
         return;
       }
-      addLog("error", `[API Proxy Error] Forwarding failed: ${error.message} (${Date.now() - startTime}ms)`, "proxy");
+      detailActive = logDetail === "all" || logDetail === "error";
+      addLog("error", `[API Proxy Error] Forwarding failed: ${error.message} (${Date.now() - startTime}ms)`, "proxy", requestId);
       addRequestLog({
         id: crypto.randomUUID(),
         timestamp: new Date().toISOString(),
@@ -1469,7 +1518,9 @@ async function startServer() {
         status: 502,
         durationMs: Date.now() - startTime,
         stream: false,
-        error: error.message
+        error: error.message,
+        requestId,
+        hasDetail: detailActive
       });
       if (sem) sem.release();
       if (res.headersSent) {

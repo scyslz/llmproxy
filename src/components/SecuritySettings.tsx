@@ -7,8 +7,6 @@ interface SecuritySettingsProps {
   onToggleVirtualKey: (enabled: boolean) => void;
   enableAdminAuth: boolean;
   onUpdateAdminAuth: (enabled: boolean, newPassword?: string) => Promise<void>;
-  debug: boolean;
-  onToggleDebug: (enabled: boolean) => void;
   onLogout: () => void;
 }
 
@@ -25,8 +23,6 @@ export default function SecuritySettings({
   onToggleVirtualKey,
   enableAdminAuth,
   onUpdateAdminAuth,
-  debug,
-  onToggleDebug,
   onLogout
 }: SecuritySettingsProps) {
   const [newPassword, setNewPassword] = useState("");
@@ -39,8 +35,8 @@ export default function SecuritySettings({
   const [logStatus, setLogStatus] = useState<LogStatus | null>(null);
   const [selectedMaxSize, setSelectedMaxSize] = useState<number>(2);
   const [logActionLoading, setLogActionLoading] = useState(false);
-  const [logRequestBody, setLogRequestBody] = useState<boolean>(true);
-  const [logResponseBody, setLogResponseBody] = useState<boolean>(false);
+  const [logDetail, setLogDetail] = useState<"off" | "basic" | "error" | "all">("basic");
+  const [logBody, setLogBody] = useState<boolean>(false);
   const [customSizeInput, setCustomSizeInput] = useState<string>("");
   const [requestLogCount, setRequestLogCount] = useState<number | null>(null);
 
@@ -56,8 +52,8 @@ export default function SecuritySettings({
       setSelectedMaxSize(statusData.maxLogSizeMB || 2);
       if (setRes.ok) {
         const setData = await setRes.json();
-        setLogRequestBody(setData.logRequestBody !== undefined ? setData.logRequestBody : true);
-        setLogResponseBody(setData.logResponseBody === true);
+        setLogDetail(setData.logDetail || "basic");
+        setLogBody(setData.logBody === true);
       }
       if (reqStatsRes && reqStatsRes.ok) {
         const statsData = await reqStatsRes.json();
@@ -70,17 +66,33 @@ export default function SecuritySettings({
     fetchLogStatusAndSettings();
   }, []);
 
-  const handleToggleLogBody = async (field: "logRequestBody" | "logResponseBody", val: boolean) => {
+  const handleToggleLogBody = async (val: boolean) => {
     try {
       setLogActionLoading(true);
-      if (field === "logRequestBody") setLogRequestBody(val);
-      if (field === "logResponseBody") setLogResponseBody(val);
+      setLogBody(val);
       await apiFetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ [field]: val })
+        body: JSON.stringify({ logBody: val })
       });
-      setSuccessMsg(`Updated ${field === "logRequestBody" ? "Request Body Logging" : "Response Body Logging"} setting.`);
+      setSuccessMsg("Updated Log Body setting.");
+    } catch (err: any) {
+      setErrorMsg(err.message || "Failed to update logging setting");
+    } finally {
+      setLogActionLoading(false);
+    }
+  };
+
+  const handleChangeLogDetail = async (val: "off" | "basic" | "error" | "all") => {
+    try {
+      setLogActionLoading(true);
+      setLogDetail(val);
+      await apiFetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ logDetail: val })
+      });
+      setSuccessMsg(`Updated Log Detail setting to ${val}.`);
     } catch (err: any) {
       setErrorMsg(err.message || "Failed to update logging setting");
     } finally {
@@ -344,57 +356,59 @@ export default function SecuritySettings({
             </div>
           </div>
 
-          {/* System Debug Mode */}
+          {/* Proxy Logging Detail */}
           <div className="bg-white border border-neutral-200 rounded-2xl p-6 shadow-xs space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2.5">
                 <Terminal className="w-5 h-5 text-neutral-800" />
-                <h3 className="font-display font-semibold text-neutral-800 text-base">Verbose Debug Logging</h3>
+                <h3 className="font-display font-semibold text-neutral-800 text-base">Proxy Logging Detail</h3>
               </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={debug}
-                  onChange={(e) => onToggleDebug(e.target.checked)}
-                  className="sr-only peer"
-                />
-                <div className="w-11 h-6 bg-neutral-250 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-neutral-900"></div>
-              </label>
             </div>
 
             <p className="text-xs text-neutral-600 leading-relaxed">
-              When enabled, detailed system and proxy request diagnostics are recorded and displayed in the Live Dashboard Console below.
+              Controls how much detail is recorded for proxy forwards (/v1/*). System and management logs are always recorded.
             </p>
 
-            <div className="pt-3 mt-3 border-t border-neutral-100 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="flex items-center justify-between bg-neutral-50 p-3 rounded-xl border border-neutral-200/80">
-                <div className="space-y-0.5">
-                  <div className="text-xs font-semibold text-neutral-800">Log Request Body</div>
-                  <div className="text-[11px] text-neutral-500">Record incoming JSON payloads</div>
+            <div className="pt-3 mt-3 border-t border-neutral-100 space-y-4">
+              <div className="bg-neutral-50 p-3.5 rounded-xl border border-neutral-200/80 space-y-2">
+                <div className="text-xs font-semibold text-neutral-800">Log Detail</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {([
+                    ["off", "Off", "No proxy logs"],
+                    ["basic", "Basic", "Summary only"],
+                    ["error", "Error", "Summary + details on non-2xx"],
+                    ["all", "All", "Full request/response details"]
+                  ] as const).map(([val, label, hint]) => (
+                    <button
+                      key={val}
+                      type="button"
+                      disabled={logActionLoading}
+                      onClick={() => handleChangeLogDetail(val)}
+                      className={`text-left px-3 py-2 rounded-xl text-xs transition-all cursor-pointer disabled:opacity-50 ${
+                        logDetail === val
+                          ? "bg-neutral-900 text-white shadow-xs"
+                          : "bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-200"
+                      }`}
+                    >
+                      <div className="font-semibold">{label}</div>
+                      <div className={`text-[10px] ${logDetail === val ? "text-neutral-300" : "text-neutral-500"}`}>{hint}</div>
+                    </button>
+                  ))}
                 </div>
-                <label className="relative inline-flex items-center cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    className="sr-only peer"
-                    checked={logRequestBody}
-                    onChange={(e) => handleToggleLogBody("logRequestBody", e.target.checked)}
-                    disabled={logActionLoading}
-                  />
-                  <div className="w-9 h-5 bg-neutral-250 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-neutral-900"></div>
-                </label>
               </div>
+
               <div className="flex items-center justify-between bg-neutral-50 p-3 rounded-xl border border-neutral-200/80">
                 <div className="space-y-0.5">
-                  <div className="text-xs font-semibold text-neutral-800">Log Response Body</div>
-                  <div className="text-[11px] text-neutral-500">Record downstream output text</div>
+                  <div className="text-xs font-semibold text-neutral-800">Log Body</div>
+                  <div className="text-[11px] text-neutral-500">Include request/response body in detail logs</div>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer select-none">
                   <input
                     type="checkbox"
                     className="sr-only peer"
-                    checked={logResponseBody}
-                    onChange={(e) => handleToggleLogBody("logResponseBody", e.target.checked)}
-                    disabled={logActionLoading}
+                    checked={logBody}
+                    onChange={(e) => handleToggleLogBody(e.target.checked)}
+                    disabled={logActionLoading || logDetail === "off" || logDetail === "basic"}
                   />
                   <div className="w-9 h-5 bg-neutral-250 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-neutral-900"></div>
                 </label>
