@@ -72,12 +72,12 @@ jobs:
 
       - name: Prepare release assets
         run: |
-          mkdir -p assets
+          mkdir -p assets/config
           cp llmproxy/llmproxy assets/
           cp llmproxy-arm64/llmproxy-arm64 assets/
+          cp start.sh assets/start.sh
+          cp config/config.json assets/config/config.json
           chmod +x assets/*
-          gzip -k assets/llmproxy
-          gzip -k assets/llmproxy-arm64
 
       - name: Upload release
         uses: softprops/action-gh-release@v2
@@ -87,3 +87,4 @@ jobs:
             assets/llmproxy.gz
             assets/llmproxy-arm64
             assets/llmproxy-arm64.gz
+            assets/start.sh

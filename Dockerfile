@@ -10,14 +10,15 @@ ARG TARGETOS TARGETARCH
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
+COPY --from=frontend /app/internal/server/webui/dist /app/internal/server/webui/dist
 COPY . .
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /app/llmproxy ./cmd/llmproxy/...
-COPY --from=frontend /app/internal/server/webui/dist /app/internal/server/webui/dist
 
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=builder /app/llmproxy .
-RUN mkdir -p /app/config /app/logs
-EXPOSE 4000
+COPY config/ ./config/
+RUN mkdir -p /app/logs
+EXPOSE 3000
 CMD ["./llmproxy"]

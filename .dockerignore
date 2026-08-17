@@ -1,7 +1,7 @@
 node_modules
 dist
-config.json
-config.json.bak
+/config.json
+/config.json.bak
 .env
 .env.example
 .env.local
