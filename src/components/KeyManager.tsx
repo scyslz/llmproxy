@@ -341,15 +341,30 @@ export default function KeyManager({
                           <span>ALL PROVIDERS (Universal)</span>
                         </span>
                       ) : (
-                        <div className="flex flex-wrap gap-1">
-                          {k.providerIds.map((pId) => {
+                        <div className="flex flex-wrap gap-1 items-center">
+                          {k.providerIds.slice(0, 2).map((pId) => {
                             const pName = providers.find((p) => p.id === pId)?.name || pId;
                             return (
-                              <span key={pId} className="bg-neutral-800 text-white px-2 py-0.5 rounded-full text-[10px] font-semibold">
+                              <span key={pId} className="bg-neutral-800 text-white px-2 py-0.5 rounded-full text-[10px] font-semibold whitespace-nowrap">
                                 {pName}
                               </span>
                             );
                           })}
+                          {k.providerIds.length > 2 && (
+                            <span
+                              className="relative group bg-neutral-200 text-neutral-600 px-2 py-0.5 rounded-full text-[10px] font-semibold cursor-default"
+                            >
+                              +{k.providerIds.length - 2} more
+                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block z-10">
+                                <div className="bg-neutral-900 text-white text-[10px] rounded-lg px-3 py-2 shadow-xl whitespace-nowrap flex flex-wrap gap-1.5 max-w-[300px]">
+                                  {k.providerIds.map((pId) => {
+                                    const pName = providers.find((p) => p.id === pId)?.name || pId;
+                                    return <span key={pId} className="bg-neutral-700 px-1.5 py-0.5 rounded">{pName}</span>;
+                                  })}
+                                </div>
+                              </div>
+                            </span>
+                          )}
                         </div>
                       )}
                     </td>
