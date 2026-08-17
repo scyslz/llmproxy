@@ -981,6 +981,23 @@ async function startServer() {
     res.json({ deleted: true });
   });
 
+  app.put("/api/keys/:key", (req, res) => {
+    cfg.keys = cfg.keys || [];
+    const idx = cfg.keys.findIndex(k => k.key === req.params.key);
+    if (idx === -1) {
+      return res.status(404).json({ error: "Virtual key not found" });
+    }
+    const { name, providerIds } = req.body;
+    if (!name) {
+      return res.status(400).json({ error: "Key name is required" });
+    }
+    cfg.keys[idx].name = name;
+    cfg.keys[idx].providerIds = providerIds || [];
+    saveConfig(cfg);
+    addLog("info", `Updated virtual key: ${name}`, "system");
+    res.json(cfg.keys[idx]);
+  });
+
   // 3. System Logs API (for Live dashboard logs)
   app.get("/api/logs", (req, res) => {
     const q = req.query as any;

@@ -230,6 +230,21 @@ export default function App() {
     }
   };
 
+  const handleUpdateKey = async (keyStr: string, name: string, providerIds: string[]) => {
+    try {
+      const res = await apiFetch(`/api/keys/${keyStr}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, providerIds })
+      });
+      if (!res.ok) throw new Error("Failed to update virtual key");
+      const updated = await res.json();
+      setVirtualKeys((prev) => prev.map((k) => (k.key === keyStr ? updated : k)));
+    } catch (err: any) {
+      alert(`Error updating virtual key: ${err.message}`);
+    }
+  };
+
   // Admin Auth operations
   const handleUpdateAdminAuth = async (enabled: boolean, newPassword?: string) => {
     const body: any = { enableAdminAuth: enabled };
@@ -358,6 +373,7 @@ export default function App() {
                 onToggleVirtualKey={handleToggleVirtualKey}
                 onCreateKey={handleCreateKey}
                 onDeleteKey={handleDeleteKey}
+                onUpdateKey={handleUpdateKey}
               />
             </motion.div>
           )}

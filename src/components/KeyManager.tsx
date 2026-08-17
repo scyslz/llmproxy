@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { VirtualKey, Provider } from "../types";
-import { Key, Copy, Check, Trash2, Plus, ShieldCheck, ShieldAlert, ToggleLeft, ToggleRight } from "lucide-react";
+import { Key, Copy, Check, Trash2, Plus, ShieldCheck, ShieldAlert, ToggleLeft, ToggleRight, ChevronUp, ChevronDown } from "lucide-react";
 
 interface KeyManagerProps {
   keys: VirtualKey[];
@@ -9,6 +9,7 @@ interface KeyManagerProps {
   onToggleVirtualKey: (enabled: boolean) => void;
   onCreateKey: (name: string, providerIds: string[]) => void;
   onDeleteKey: (keyStr: string) => void;
+  onUpdateKey: (keyStr: string, name: string, providerIds: string[]) => void;
 }
 
 export default function KeyManager({
@@ -17,13 +18,15 @@ export default function KeyManager({
   enableVirtualKey,
   onToggleVirtualKey,
   onCreateKey,
-  onDeleteKey
+  onDeleteKey,
+  onUpdateKey
 }: KeyManagerProps) {
   const [name, setName] = useState("");
   const [selectedProviders, setSelectedProviders] = useState<string[]>([]);
   const [scopeMode, setScopeMode] = useState<"all" | "custom">("all");
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
+  const [editingKey, setEditingKey] = useState<VirtualKey | null>(null);
   const [confirmDeleteKey, setConfirmDeleteKey] = useState<string | null>(null);
 
   const handleCopy = (keyStr: string) => {
@@ -38,15 +41,51 @@ export default function KeyManager({
     );
   };
 
+  const moveProvider = (index: number, direction: "up" | "down") => {
+    setSelectedProviders((prev) => {
+      const arr = [...prev];
+      const target = direction === "up" ? index - 1 : index + 1;
+      if (target < 0 || target >= arr.length) return arr;
+      [arr[index], arr[target]] = [arr[target], arr[index]];
+      return arr;
+    });
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
     const finalProviders = scopeMode === "all" ? ["all"] : selectedProviders;
-    onCreateKey(name.trim(), finalProviders);
+    if (editingKey) {
+      onUpdateKey(editingKey.key, name.trim(), finalProviders);
+    } else {
+      onCreateKey(name.trim(), finalProviders);
+    }
     setName("");
     setSelectedProviders([]);
     setScopeMode("all");
     setIsAdding(false);
+    setEditingKey(null);
+  };
+
+  const startEdit = (k: VirtualKey) => {
+    setEditingKey(k);
+    setName(k.name);
+    if (k.providerIds.length === 0 || k.providerIds.includes("all") || k.providerIds.includes("*")) {
+      setScopeMode("all");
+      setSelectedProviders([]);
+    } else {
+      setScopeMode("custom");
+      setSelectedProviders(k.providerIds);
+    }
+    setIsAdding(true);
+  };
+
+  const cancelForm = () => {
+    setName("");
+    setSelectedProviders([]);
+    setScopeMode("all");
+    setIsAdding(false);
+    setEditingKey(null);
   };
 
   return (
@@ -104,7 +143,7 @@ export default function KeyManager({
           </button>
         ) : (
           <form onSubmit={handleSubmit} className="bg-neutral-50 border border-neutral-150 rounded-xl p-5 space-y-4">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-600">New Key</h4>
+            <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-600">{editingKey ? "Edit Key" : "New Key"}</h4>
             <div className="space-y-1">
               <label className="text-xs font-medium text-neutral-500">Key Identifier Name</label>
               <input
@@ -167,32 +206,75 @@ export default function KeyManager({
               </div>
 
               {scopeMode === "custom" && (
-                <div className="mt-2.5 pt-2.5 border-t border-neutral-200">
-                  <p className="text-[11px] text-neutral-500 font-medium mb-2">Select allowed providers:</p>
+                <div className="mt-2.5 pt-2.5 border-t border-neutral-200 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[11px] text-neutral-500 font-medium">Priority order (fallback chain):</p>
+                  </div>
+                  {selectedProviders.length === 0 ? (
+                    <p className="text-[10px] text-neutral-400 italic">Select providers below to add them to the priority chain.</p>
+                  ) : (
+                    <div className="space-y-1">
+                      {selectedProviders.map((id, index) => {
+                        const p = providers.find((x) => x.id === id);
+                        return (
+                          <div
+                            key={id}
+                            className="flex items-center space-x-2 bg-neutral-900 text-white rounded-xl px-3 py-2 text-xs"
+                          >
+                            <span className="text-neutral-400 font-mono w-4 text-center">{index + 1}</span>
+                            <span className="flex-1 font-semibold">{p?.name || id}</span>
+                            <span className="text-[10px] text-neutral-400">{p?.models.length || 0} models</span>
+                            <button
+                              type="button"
+                              onClick={() => moveProvider(index, "up")}
+                              disabled={index === 0}
+                              className="p-0.5 text-neutral-400 hover:text-white disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+                            >
+                              <ChevronUp className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => moveProvider(index, "down")}
+                              disabled={index === selectedProviders.length - 1}
+                              className="p-0.5 text-neutral-400 hover:text-white disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
+                            >
+                              <ChevronDown className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleProviderToggle(id)}
+                              className="p-0.5 text-neutral-400 hover:text-red-400 transition-colors"
+                              title="Remove from chain"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <p className="text-[11px] text-neutral-500 font-medium pt-1">Available providers:</p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                    {providers.map((p) => (
-                      <label
-                        key={p.id}
-                        className={`flex items-center space-x-2 border rounded-xl p-3 cursor-pointer select-none transition-all ${
-                          selectedProviders.includes(p.id)
-                            ? "bg-neutral-900 border-neutral-900 text-white shadow-2xs"
-                            : "bg-white border-neutral-200 text-neutral-700 hover:border-neutral-300"
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedProviders.includes(p.id)}
-                          onChange={() => handleProviderToggle(p.id)}
-                          className="hidden"
-                        />
-                        <div className="flex-1">
-                          <p className="text-xs font-semibold">{p.name}</p>
-                          <p className={`text-[10px] ${selectedProviders.includes(p.id) ? "text-neutral-300" : "text-neutral-500"}`}>
-                            {p.models.length} models
-                          </p>
-                        </div>
-                      </label>
-                    ))}
+                    {providers
+                      .filter((p) => !selectedProviders.includes(p.id))
+                      .map((p) => (
+                        <label
+                          key={p.id}
+                          className="flex items-center space-x-2 border border-dashed border-neutral-200 rounded-xl p-3 cursor-pointer select-none transition-all hover:border-neutral-300 bg-white text-neutral-700"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={false}
+                            onChange={() => handleProviderToggle(p.id)}
+                            className="hidden"
+                          />
+                          <div className="flex-1">
+                            <p className="text-xs font-semibold">{p.name}</p>
+                            <p className="text-[10px] text-neutral-500">{p.models.length} models</p>
+                          </div>
+                          <Plus className="w-3.5 h-3.5 text-neutral-400" />
+                        </label>
+                      ))}
                   </div>
                 </div>
               )}
@@ -207,11 +289,7 @@ export default function KeyManager({
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setIsAdding(false);
-                  setName("");
-                  setSelectedProviders([]);
-                }}
+                onClick={cancelForm}
                 className="bg-white border border-neutral-200 text-neutral-600 hover:bg-neutral-50 px-4 py-2 rounded-xl text-xs font-medium transition-colors"
               >
                 Cancel
@@ -279,30 +357,43 @@ export default function KeyManager({
                       {new Date(k.createdAt).toLocaleDateString()} {new Date(k.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                     </td>
                     <td className="py-4 text-right">
-                      {confirmDeleteKey === k.key ? (
-                        <div className="inline-flex items-center space-x-1">
-                          <button
-                            onClick={() => { onDeleteKey(k.key); setConfirmDeleteKey(null); }}
-                            className="bg-red-600 hover:bg-red-500 text-white px-2 py-1 rounded text-[11px] font-semibold transition-colors"
-                          >
-                            Confirm
-                          </button>
-                          <button
-                            onClick={() => setConfirmDeleteKey(null)}
-                            className="bg-neutral-100 hover:bg-neutral-200 text-neutral-600 px-2 py-1 rounded text-[11px] font-medium transition-colors"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => setConfirmDeleteKey(k.key)}
-                          className="p-1.5 hover:bg-red-50 text-neutral-400 hover:text-red-500 rounded-lg transition-colors inline-flex"
-                          title="Delete Key"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      )}
+                      <div className="inline-flex items-center space-x-1">
+                        {confirmDeleteKey === k.key ? (
+                          <>
+                            <button
+                              onClick={() => { onDeleteKey(k.key); setConfirmDeleteKey(null); }}
+                              className="bg-red-600 hover:bg-red-500 text-white px-2 py-1 rounded text-[11px] font-semibold transition-colors"
+                            >
+                              Confirm
+                            </button>
+                            <button
+                              onClick={() => setConfirmDeleteKey(null)}
+                              className="bg-neutral-100 hover:bg-neutral-200 text-neutral-600 px-2 py-1 rounded text-[11px] font-medium transition-colors"
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => startEdit(k)}
+                              className="p-1.5 hover:bg-neutral-100 text-neutral-400 hover:text-neutral-700 rounded-lg transition-colors inline-flex"
+                              title="Edit Key"
+                            >
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                              </svg>
+                            </button>
+                            <button
+                              onClick={() => setConfirmDeleteKey(k.key)}
+                              className="p-1.5 hover:bg-red-50 text-neutral-400 hover:text-red-500 rounded-lg transition-colors inline-flex"
+                              title="Delete Key"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
