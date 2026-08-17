@@ -1,0 +1,60 @@
+{
+  "listen": ":3000",
+  "enableVirtualKey": true,
+  "enableAdminAuth": false,
+  "adminPassword": "admin",
+  "logDetail": "basic",
+  "logBody": false,
+  "maxLogSizeMB": 2,
+  "maxRequestLogs": 10000,
+  "activeLogFile": 1,
+  "providers": [
+    {
+      "id": "mock",
+      "name": "Mock Upstream",
+      "baseUrl": "http://127.0.0.1:9100",
+      "apiKey": "upstream-key",
+      "enabled": true,
+      "models": [
+        "mock-model",
+        "1234"
+      ],
+      "concurrency": 0,
+      "openaiEndpoint": "/chat/completions",
+      "defaultModel": "1234"
+    },
+    {
+      "id": "bad",
+      "name": "Bad Provider",
+      "baseUrl": "http://127.0.0.1:9101",
+      "apiKey": "bad-key",
+      "enabled": true,
+      "models": [
+        "mock-model",
+        "1234"
+      ],
+      "concurrency": 0,
+      "openaiEndpoint": "/chat/completions",
+      "defaultModel": "1234"
+    }
+  ],
+  "keys": [
+    {
+      "key": "sk-proxy-test-key",
+      "name": "Test Client",
+      "providerIds": [
+        "mock"
+      ],
+      "createdAt": "2026-08-13T00:00:00.000Z"
+    },
+    {
+      "key": "sk-proxy-test-key2",
+      "name": "Test Fallback Updated",
+      "providerIds": [
+        "mock",
+        "bad"
+      ],
+      "createdAt": "2026-08-17T00:00:00.000Z"
+    }
+  ]
+}
