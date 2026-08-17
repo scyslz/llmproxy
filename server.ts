@@ -227,15 +227,6 @@ function addLog(
         "INSERT INTO system_logs (time, level, category, file, message, request_id) VALUES (?, ?, ?, ?, ?, ?)"
       ));
       stmt.run(new Date(timestamp).getTime(), level, category || null, logEntry.file || null, message, requestId || null);
-      const row = sysDb.prepare("SELECT COUNT(*) AS c FROM system_logs").get() as any;
-      const count = row ? row.c : 0;
-      if (count > SYSTEM_LOG_LIMIT) {
-        sysDb.prepare(`
-          DELETE FROM system_logs WHERE id IN (
-            SELECT id FROM system_logs ORDER BY id DESC LIMIT -1 OFFSET ?
-          )
-        `).run(SYSTEM_LOG_LIMIT);
-      }
     }
   } catch (err) {
     console.error("Failed to write system log to DB:", err);
@@ -289,7 +280,6 @@ function readDiskLogs(limit?: number): any[] {
 // System logs (SQLite-backed): dual-file round-robin storage mirroring the JSON log files
 const SYSTEM_DB_FILE_1 = path.join(LOGS_DIR, "system_logs.db");
 const SYSTEM_DB_FILE_2 = path.join(LOGS_DIR, "system_logs-2.db");
-const SYSTEM_LOG_LIMIT = 50000;
 let sysDb: DatabaseSync | null = null;
 let sysLogInsertStmt: any = null;
 
@@ -297,36 +287,6 @@ function getSystemDbPath(num: number): string {
   return num === 2 ? SYSTEM_DB_FILE_2 : SYSTEM_DB_FILE_1;
 }
 
-function importDiskLogsToSqlite() {
-  if (!sysDb) return;
-  const parseFile = (filePath: string, fileNum: number) => {
-    if (!fs.existsSync(filePath)) return [];
-    const content = fs.readFileSync(filePath, "utf-8");
-    return content.split("\n").filter(Boolean).map(line => {
-      try { return { ...JSON.parse(line), file: fileNum }; } catch { return null; }
-    }).filter(Boolean) as any[];
-  };
-  const all = [...parseFile(LOG_FILE_1, 1), ...parseFile(LOG_FILE_2, 2)]
-    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-  const existing = new Set<string>();
-  const rows = sysDb.prepare("SELECT time, message FROM system_logs").all() as any[];
-  for (const r of rows) existing.add(`${r.time}:${r.message}`);
-  const insert = sysDb.prepare(
-    "INSERT INTO system_logs (time, level, category, file, message, request_id) VALUES (?, ?, ?, ?, ?, ?)"
-  );
-  let added = 0;
-  for (const l of all) {
-    const t = new Date(l.timestamp).getTime();
-    if (existing.has(`${t}:${l.message}`)) continue;
-    try {
-      insert.run(t, l.level, l.category || null, l.file || null, l.message, l.requestId || null);
-      added++;
-    } catch {}
-  }
-  if (added > 0) {
-    console.log(`[INFO] [SYSTEM] Imported ${added} system log entries from disk.`);
-  }
-}
 
 function openSystemLogDb(num: number) {
   try {
@@ -353,12 +313,6 @@ function openSystemLogDb(num: number) {
         sysDb.exec("ALTER TABLE system_logs ADD COLUMN request_id TEXT");
       }
     } catch {}
-    importDiskLogsToSqlite();
-    sysDb.prepare(`
-      DELETE FROM system_logs WHERE id NOT IN (
-        SELECT id FROM system_logs ORDER BY id DESC LIMIT ?
-      )
-    `).run(SYSTEM_LOG_LIMIT);
   } catch (err: any) {
     console.error("Failed to initialize system log database:", err);
     try { if (sysDb) sysDb.close(); } catch {}
@@ -1017,15 +971,20 @@ async function startServer() {
     if (sysDb) {
       try {
         const where = clauses.length > 0 ? " WHERE " + clauses.join(" AND ") : "";
-        const totalRow = sysDb.prepare(`SELECT COUNT(*) AS c FROM system_logs${where}`).get(...params) as any;
-        const total = totalRow ? totalRow.c : 0;
+        let total: number | undefined;
+        if (Number.isNaN(sinceId) || sinceId <= 0) {
+          const totalRow = sysDb.prepare(`SELECT COUNT(*) AS c FROM system_logs${where}`).get(...params) as any;
+          total = totalRow ? totalRow.c : 0;
+        }
         let rows: any[];
         if (!Number.isNaN(sinceId) && sinceId > 0) {
           rows = sysDb.prepare(`SELECT * FROM system_logs${where} ORDER BY id ASC LIMIT ?`).all(...params, limit) as any[];
         } else {
           rows = (sysDb.prepare(`SELECT * FROM system_logs${where} ORDER BY id DESC LIMIT ?`).all(...params, limit) as any[]).reverse();
         }
-        res.json({ logs: rows.map(systemLogRowToApi), total });
+        const result: any = { logs: rows.map(systemLogRowToApi) };
+        if (total !== undefined) result.total = total;
+        res.json(result);
         return;
       } catch (err: any) {
         // fall through to disk fallback on error
