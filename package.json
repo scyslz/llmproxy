@@ -8,6 +8,8 @@
     "build": "vite build",
     "build:bundle": "echo 'Deprecated: use Go binary'",
     "build:go": "npm run build && go build -o dist/llmproxy ./cmd/llmproxy/...",
+    "build:go:arm64": "GOOS=linux GOARCH=arm64 go build -o dist/llmproxy-arm64 ./cmd/llmproxy/...",
+    "build:go:all": "npm run build && go build -o dist/llmproxy ./cmd/llmproxy/... && GOOS=linux GOARCH=arm64 go build -o dist/llmproxy-arm64 ./cmd/llmproxy/...",
     "build:sea": "echo 'Deprecated: use Go binary'",
     "start": "echo 'Use ./dist/llmproxy to start the Go version'",
     "clean": "rm -rf dist internal/server/webui/dist config.json llmproxy",

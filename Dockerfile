@@ -5,12 +5,13 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM golang:1.25-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
+ARG TARGETOS TARGETARCH
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o /app/llmproxy ./cmd/llmproxy/...
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /app/llmproxy ./cmd/llmproxy/...
 COPY --from=frontend /app/internal/server/webui/dist /app/internal/server/webui/dist
 
 FROM alpine:3.21
