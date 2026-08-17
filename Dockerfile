@@ -1,22 +1,22 @@
-FROM node:22-alpine AS builder
-
+FROM node:22-alpine AS frontend
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM node:22-alpine
-
+FROM golang:1.25-alpine AS builder
 WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
-COPY --from=builder /app/dist ./dist
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o /app/llmproxy ./cmd/llmproxy/...
+COPY --from=frontend /app/internal/server/webui/dist /app/internal/server/webui/dist
 
-ENV NODE_ENV=production
-
-RUN mkdir -p /app/config /app/logs && chown -R node:node /app
-
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates
+WORKDIR /app
+COPY --from=builder /app/llmproxy .
+RUN mkdir -p /app/config /app/logs
 EXPOSE 4000
-USER node
-CMD ["node", "dist/server.cjs"]
+CMD ["./llmproxy"]

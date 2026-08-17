@@ -5,11 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
-    "build:bundle": "esbuild server.ts --bundle --platform=node --format=cjs --sourcemap --outfile=dist/bundle.cjs",
-    "build:sea": "npm run build && npm run build:bundle && node --experimental-sea-config sea-config.json && cp $(command -v node) dist/llmproxy && npx postject dist/llmproxy NODE_SEA_BLOB dist/sea-prep.blob --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2",
-    "start": "node dist/server.cjs",
-    "clean": "rm -rf dist config.json",
+    "build": "vite build",
+    "build:bundle": "echo 'Deprecated: use Go binary'",
+    "build:go": "npm run build && go build -o dist/llmproxy ./cmd/llmproxy/...",
+    "build:sea": "echo 'Deprecated: use Go binary'",
+    "start": "echo 'Use ./dist/llmproxy to start the Go version'",
+    "clean": "rm -rf dist internal/server/webui/dist config.json llmproxy",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

@@ -5,8 +5,6 @@ services:
     restart: unless-stopped
     ports:
       - "4000:4000"
-    environment:
-      NODE_ENV: production
     volumes:
       - ./config:/app/config
       - ./logs:/app/logs

@@ -9,6 +9,7 @@ node_modules/
 
 # 构建输出
 dist/
+internal/server/webui/dist/
 
 # IDE
 .vscode/
