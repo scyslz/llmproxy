@@ -18,6 +18,31 @@ interface Provider {
   defaultModel?: string; // optional fallback model used when request model is not in the models list
 }
 
+// Circuit breaker state for per-provider failure fallback.
+// When a provider fails, it enters cooldown; requests skip it until cooldown expires (auto recovery).
+const providerFailures = new Map<string, { failCount: number; cooldownUntil: number }>();
+const COOLDOWN_BASE_MS = 15000;
+const COOLDOWN_MAX_MS = 300000;
+
+function inCooldown(providerId: string): boolean {
+  const entry = providerFailures.get(providerId);
+  if (!entry) return false;
+  if (Date.now() < entry.cooldownUntil) return true;
+  providerFailures.delete(providerId);
+  return false;
+}
+
+function recordProviderFailure(providerId: string): void {
+  const entry = providerFailures.get(providerId) ?? { failCount: 0, cooldownUntil: 0 };
+  const failCount = entry.failCount + 1;
+  const cooldown = Math.min(COOLDOWN_BASE_MS * Math.pow(2, failCount - 1), COOLDOWN_MAX_MS);
+  providerFailures.set(providerId, { failCount, cooldownUntil: Date.now() + cooldown });
+}
+
+function recordProviderSuccess(providerId: string): void {
+  providerFailures.delete(providerId);
+}
+
 class Semaphore {
   private current = 0;
   private queue: (() => void)[] = [];
@@ -1147,15 +1172,19 @@ async function startServer() {
     }
 
     // Apply virtual key provider permissions if a valid virtual key is used
+    let boundToSpecificProviders = false;
     if (vKey) {
       if (vKey.providerIds && vKey.providerIds.length > 0 && !vKey.providerIds.includes("all") && !vKey.providerIds.includes("*")) {
-        allowedProviders = cfg.providers.filter(p => vKey.providerIds.includes(p.id));
+        allowedProviders = vKey.providerIds
+          .map(id => cfg.providers.find(p => p.id === id))
+          .filter((p): p is Provider => Boolean(p));
+        boundToSpecificProviders = true;
       }
     }
 
-    const enabledModels = allowedProviders
-      .filter(p => p.enabled)
-      .flatMap(p => p.models);
+    const enabledModels = boundToSpecificProviders
+      ? allowedProviders.flatMap(p => p.models)
+      : allowedProviders.filter(p => p.enabled).flatMap(p => p.models);
 
     const uniqueModels = Array.from(new Set(enabledModels));
 
@@ -1256,6 +1285,7 @@ async function startServer() {
     // Determine target providers allowed by Virtual Key
     let allowedProviders = cfg.providers;
     let virtualKeyUsed = "";
+    let boundToSpecificProviders = false;
 
     const authHeader = req.headers.authorization;
     const apiKey = extractApiKey(authHeader);
@@ -1273,72 +1303,68 @@ async function startServer() {
     if (vKey) {
       virtualKeyUsed = vKey.name;
       if (vKey.providerIds && vKey.providerIds.length > 0 && !vKey.providerIds.includes("all") && !vKey.providerIds.includes("*")) {
-        allowedProviders = cfg.providers.filter(p => vKey.providerIds.includes(p.id));
+        // Order matters: bound provider order is the fallback priority chain
+        allowedProviders = vKey.providerIds
+          .map(id => cfg.providers.find(p => p.id === id))
+          .filter((p): p is Provider => Boolean(p));
+        boundToSpecificProviders = true;
       }
     }
 
-    // Select active provider
-    const provider = allowedProviders.find(p => p.enabled);
-    if (!provider) {
+    // Candidate providers in priority order: bound provider order, else all enabled providers.
+    const candidates = boundToSpecificProviders
+      ? allowedProviders
+      : allowedProviders.filter(p => p.enabled);
+    if (candidates.length === 0) {
       logProxy("error", `No active provider enabled or allowed for request to ${originalPath}`);
       return res.status(503).json({ error: "Service Unavailable: No provider enabled/authorized" });
     }
 
-    // Prepare body & resolve model
-    let reqBody = req.body;
+    // Prepare body & resolve model (adjusted per provider during fallback attempts)
+    const originalBody = req.body;
+    let reqBody = originalBody;
     let reqModel = "";
 
     if (method === "POST" || method === "PUT") {
-      reqModel = reqBody?.model || "";
-
-      // Model resolution check
-      let modelOK = provider.models.includes(reqModel);
-      if (!modelOK && provider.models.length > 0) {
-        const fallbackModel = provider.defaultModel || provider.models[0];
-        if (cfg.logDetail === "all") {
-          logProxy("warn", `Model '${reqModel}' not supported by provider '${provider.name}'. Substituting with fallback '${fallbackModel}'.`);
-        }
-        reqBody = { ...reqBody, model: fallbackModel };
-        reqModel = fallbackModel;
-      }
-    }
-
-    // Build downstream request URL safely
-    const cleanBaseUrl = provider.baseUrl.trim().replace(/\/+$/, "");
-    let endpointBase = cleanBaseUrl;
-    if (
-      !cleanBaseUrl.endsWith("/v1") &&
-      !cleanBaseUrl.endsWith("/openai") &&
-      !cleanBaseUrl.endsWith("/v1beta") &&
-      !cleanBaseUrl.endsWith("/api") &&
-      !cleanBaseUrl.endsWith("/v4") &&
-      !cleanBaseUrl.endsWith("/v2") &&
-      !cleanBaseUrl.endsWith("/v3")
-    ) {
-      endpointBase = `${cleanBaseUrl}/v1`;
-    }
-
-    const idx = originalPath.indexOf("/v1");
-    const subPath = idx >= 0 ? originalPath.substring(idx + 3) : originalPath;
-    const cleanSubPath = subPath.startsWith("/") ? subPath : `/${subPath}`;
-
-    // Prefer the configured OpenAI endpoint path (e.g. /chat/completions) when set
-    const configuredEp = provider.openaiEndpoint?.trim();
-    const targetUrl = configuredEp
-      ? `${cleanBaseUrl}${configuredEp.startsWith("/") ? configuredEp : `/${configuredEp}`}`
-      : `${endpointBase}${cleanSubPath}`;
-
-    const pathRewritten =
-      configuredEp !== undefined &&
-      configuredEp.trim() !== "" &&
-      configuredEp !== cleanSubPath;
-
-    if (logDetail !== "off") {
-      const forwardSuffix = `${method} ${originalPath} -> ${provider.name} (${reqModel || "default"})${virtualKeyUsed ? ` [Key: ${virtualKeyUsed}]` : ""}${pathRewritten ? ` => ${configuredEp}` : ""}`;
-      logProxy("info", `[API Proxy Forward] ${forwardSuffix}`);
+      reqModel = originalBody?.model || "";
     }
 
     const shouldLogBody = cfg.logBody === true;
+
+    const buildTargetUrl = (p: Provider): string => {
+      const cleanBaseUrl = p.baseUrl.trim().replace(/\/+$/, "");
+      let endpointBase = cleanBaseUrl;
+      if (
+        !cleanBaseUrl.endsWith("/v1") &&
+        !cleanBaseUrl.endsWith("/openai") &&
+        !cleanBaseUrl.endsWith("/v1beta") &&
+        !cleanBaseUrl.endsWith("/api") &&
+        !cleanBaseUrl.endsWith("/v4") &&
+        !cleanBaseUrl.endsWith("/v2") &&
+        !cleanBaseUrl.endsWith("/v3")
+      ) {
+        endpointBase = `${cleanBaseUrl}/v1`;
+      }
+      const idx = originalPath.indexOf("/v1");
+      const subPath = idx >= 0 ? originalPath.substring(idx + 3) : originalPath;
+      const cleanSubPath = subPath.startsWith("/") ? subPath : `/${subPath}`;
+      const configuredEp = p.openaiEndpoint?.trim();
+      return configuredEp
+        ? `${cleanBaseUrl}${configuredEp.startsWith("/") ? configuredEp : `/${configuredEp}`}`
+        : `${endpointBase}${cleanSubPath}`;
+    };
+
+    let targetUrl = "";
+    let usedProvider: Provider | null = null;
+    let usedResponse: Response | null = null;
+    let usedSem: Semaphore | null = null;
+    let timeoutMs = 0;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let abortReason: "timeout" | "client_close" | null = null;
+    let currentController: AbortController | null = null;
+    let detailActive = false;
+    const degradedFrom: string[] = [];
+
     const logRequestDetail = () => {
       const reqHeaders = Object.entries(req.headers)
         .map(([k, v]) => `${k}: ${k.toLowerCase() === "authorization" ? "[redacted]" : v}`)
@@ -1349,50 +1375,175 @@ async function startServer() {
         logProxy("info", `[API Proxy Request Body] ${JSON.stringify(reqBody)}`);
       }
     };
-    if (logDetail === "all") {
-      logRequestDetail();
-    }
 
-    const concurrencyLimit = provider.concurrency || 0;
-    const sem = concurrencyLimit > 0 ? getSemaphore(provider.id, concurrencyLimit) : null;
+    res.on("close", () => {
+      if (!res.writableEnded) {
+        abortReason = "client_close";
+        currentController?.abort();
+      }
+    });
 
-    if (sem) {
-      await sem.acquire();
-    }
-
-    const controller = new AbortController();
-    let abortReason: "timeout" | "client_close" | null = null;
-    const timeoutMs = provider.timeout || 0;
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    let detailActive = false;
-
-    try {
-      // Setup headers
-      const headers = new Headers();
-      headers.set("Content-Type", "application/json");
-      if (provider.apiKey) {
-        headers.set("Authorization", `Bearer ${provider.apiKey}`);
+    // Try candidates in order; on failure mark the provider and fall back to the next.
+    for (const p of candidates) {
+      if (res.writableEnded) break;
+      if (inCooldown(p.id)) {
+        degradedFrom.push(`${p.name} (cooldown)`);
+        logProxy("warn", `[API Proxy Degrade] Skipping ${p.name} (in cooldown), trying next provider`);
+        continue;
       }
 
-      timeoutId = timeoutMs > 0 ? setTimeout(() => {
-        abortReason = "timeout";
-        controller.abort();
-      }, timeoutMs) : null;
-
-      res.on("close", () => {
-        if (!res.writableEnded) {
-          abortReason = "client_close";
-          controller.abort();
+      // Per-provider model resolution
+      let candBody = originalBody;
+      let candModel = reqModel;
+      if (method === "POST" || method === "PUT") {
+        let modelOK = p.models.includes(candModel);
+        if (!modelOK && p.models.length > 0) {
+          const fallbackModel = p.defaultModel || p.models[0];
+          if (cfg.logDetail === "all") {
+            logProxy("warn", `Model '${candModel}' not supported by provider '${p.name}'. Substituting with fallback '${fallbackModel}'.`);
+          }
+          candBody = { ...originalBody, model: fallbackModel };
+          candModel = fallbackModel;
         }
-      });
+      }
 
-      const response = await fetch(targetUrl, {
+      targetUrl = buildTargetUrl(p);
+      const idx = originalPath.indexOf("/v1");
+      const subPath = idx >= 0 ? originalPath.substring(idx + 3) : originalPath;
+      const cleanSubPath = subPath.startsWith("/") ? subPath : `/${subPath}`;
+      const configuredEp = p.openaiEndpoint?.trim();
+      const pathRewritten =
+        configuredEp !== undefined &&
+        configuredEp.trim() !== "" &&
+        configuredEp !== cleanSubPath;
+
+      if (logDetail !== "off") {
+        const forwardSuffix = `${method} ${originalPath} -> ${p.name} (${candModel || "default"})${virtualKeyUsed ? ` [Key: ${virtualKeyUsed}]` : ""}${pathRewritten ? ` => ${configuredEp}` : ""}`;
+        logProxy("info", `[API Proxy Forward] ${forwardSuffix}`);
+      }
+      if (logDetail === "all") {
+        logRequestDetail();
+      }
+
+      const concurrencyLimit = p.concurrency || 0;
+      const sem = concurrencyLimit > 0 ? getSemaphore(p.id, concurrencyLimit) : null;
+      if (sem) {
+        await sem.acquire();
+      }
+
+      const controller = new AbortController();
+      currentController = controller;
+      abortReason = null;
+      timeoutMs = p.timeout || 0;
+      timeoutId = null;
+
+      try {
+        const headers = new Headers();
+        headers.set("Content-Type", "application/json");
+        if (p.apiKey) {
+          headers.set("Authorization", `Bearer ${p.apiKey}`);
+        }
+
+        timeoutId = timeoutMs > 0 ? setTimeout(() => {
+          abortReason = "timeout";
+          controller.abort();
+        }, timeoutMs) : null;
+
+        const resp = await fetch(targetUrl, {
+          method,
+          headers,
+          body: (method === "POST" || method === "PUT") ? JSON.stringify(candBody) : undefined,
+          signal: controller.signal
+        });
+        if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
+
+        if (resp.ok) {
+          usedProvider = p;
+          usedResponse = resp;
+          usedSem = sem;
+          reqBody = candBody;
+          reqModel = candModel;
+          recordProviderSuccess(p.id);
+          break;
+        }
+
+        recordProviderFailure(p.id);
+        degradedFrom.push(`${p.name} (HTTP ${resp.status})`);
+        logProxy("warn", `[API Proxy Degrade] ${p.name} returned HTTP ${resp.status}, trying next provider`);
+        try { await resp.body?.cancel(); } catch {}
+        if (sem) sem.release();
+        currentController = null;
+      } catch (err: any) {
+        if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
+        if (abortReason === "client_close") {
+          if (sem) sem.release();
+          currentController = null;
+          logProxy("warn", `[API Proxy Aborted] Client closed connection (${Date.now() - startTime}ms)`);
+          if (logDetail !== "all") logRequestDetail();
+          addRequestLog({
+            id: crypto.randomUUID(),
+            timestamp: new Date().toISOString(),
+            keyName: virtualKeyUsed,
+            keyId: maskKey(apiKey),
+            model: candModel,
+            provider: p.name,
+            path: originalPath,
+            method,
+            promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalTokens: 0,
+            status: 499,
+            durationMs: Date.now() - startTime,
+            stream: false,
+            error: "client closed connection",
+            requestId,
+            hasDetail: hasRelatedLogs(requestId)
+          });
+          return;
+        }
+        recordProviderFailure(p.id);
+        const reason = abortReason === "timeout" ? `timeout after ${timeoutMs}ms` : err.message;
+        degradedFrom.push(`${p.name} (${reason})`);
+        logProxy("warn", `[API Proxy Degrade] ${p.name} failed: ${reason}, trying next provider`);
+        if (sem) sem.release();
+        currentController = null;
+      }
+    }
+
+    if (!usedProvider || !usedResponse) {
+      const lastCandidate = candidates[candidates.length - 1];
+      const reason = degradedFrom[degradedFrom.length - 1] || "all providers failed";
+      const lastTimeout = abortReason === "timeout";
+      logProxy(lastTimeout ? "warn" : "error", `[API Proxy ${lastTimeout ? "Timeout" : "Error"}] All providers failed: ${reason} (${Date.now() - startTime}ms)`);
+      if (logDetail !== "all") logRequestDetail();
+      addRequestLog({
+        id: crypto.randomUUID(),
+        timestamp: new Date().toISOString(),
+        keyName: virtualKeyUsed,
+        keyId: maskKey(apiKey),
+        model: reqModel,
+        provider: lastCandidate.name,
+        path: originalPath,
         method,
-        headers,
-        body: (method === "POST" || method === "PUT") ? JSON.stringify(reqBody) : undefined,
-        signal: controller.signal
+        promptTokens: 0, completionTokens: 0, cachedTokens: 0, totalTokens: 0,
+        status: lastTimeout ? 504 : 502,
+        durationMs: Date.now() - startTime,
+        stream: false,
+        error: reason,
+        requestId,
+        hasDetail: hasRelatedLogs(requestId)
       });
-      if (timeoutId) clearTimeout(timeoutId);
+      if (res.headersSent) {
+        res.destroy(new Error(reason));
+      } else {
+        res.status(lastTimeout ? 504 : 502).json({ error: lastTimeout ? `Upstream timeout: ${reason}` : `Provider gateway error: ${reason}` });
+      }
+      return;
+    }
+
+    const provider = usedProvider;
+    const response = usedResponse;
+    const sem = usedSem;
+
+    try {
 
       if (logDetail !== "off") {
         logProxy("info", `[API Proxy Complete] Status ${response.status} ${response.statusText} (${Date.now() - startTime}ms) -> ${provider.name}`);
