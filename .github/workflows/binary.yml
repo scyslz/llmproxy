@@ -2,7 +2,7 @@ name: Binary
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
     tags: ["v*"]
   workflow_dispatch:
     inputs:
@@ -18,10 +18,10 @@ jobs:
       matrix:
         include:
           - platform: linux/amd64
-            target: x86_64-unknown-linux-gnu
+            goarch: amd64
             binary: llmproxy
           - platform: linux/arm64
-            target: aarch64-unknown-linux-gnu
+            goarch: arm64
             binary: llmproxy-arm64
 
     steps:
@@ -33,28 +33,25 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build frontend + bundle
-        run: npm run build && npm run build:bundle
+      - name: Build frontend (embedded into Go binary)
+        run: npm run build
 
-      - name: Set up sea-config.json
+      - name: Build Go binary (${{ matrix.target }})
         run: |
-          cat > sea-config.json <<'EOF'
-          {
-            "main": "dist/bundle.cjs",
-            "output": "dist/sea-prep.blob",
-            "disableExperimentalSEAWarning": true
-          }
-          EOF
+          CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.goarch }} \
+            go build -trimpath -ldflags="-s -w" \
+            -o dist/${{ matrix.binary }} ./cmd/llmproxy/...
 
-      - name: Build SEA binary (${{ matrix.target }})
-        run: |
-          node --experimental-sea-config sea-config.json
-          cp "$(command -v node)" "dist/${{ matrix.binary }}"
-          npx postject "dist/${{ matrix.binary }}" NODE_SEA_BLOB dist/sea-prep.blob \
-            --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
+      - name: Verify binary architecture
+        run: file dist/${{ matrix.binary }}
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
@@ -78,6 +75,7 @@ jobs:
           mkdir -p assets
           cp llmproxy/llmproxy assets/
           cp llmproxy-arm64/llmproxy-arm64 assets/
+          chmod +x assets/*
           gzip -k assets/llmproxy
           gzip -k assets/llmproxy-arm64
 
@@ -85,5 +83,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
+            assets/llmproxy
             assets/llmproxy.gz
+            assets/llmproxy-arm64
             assets/llmproxy-arm64.gz
