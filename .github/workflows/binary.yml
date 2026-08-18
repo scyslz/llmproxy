@@ -81,9 +81,10 @@ jobs:
           mkdir -p staging/amd64/config staging/arm64/config
           cp llmproxy/llmproxy staging/amd64/
           cp llmproxy-arm64/llmproxy-arm64 staging/arm64/
-          cp start.sh staging/amd64/ staging/arm64/
-          cp config/config.json staging/amd64/config/
-          cp config/config.json staging/arm64/config/
+          cp start.sh staging/amd64/start.sh
+          cp start.sh staging/arm64/start.sh
+          cp config/config.json staging/amd64/config/config.json
+          cp config/config.json staging/arm64/config/config.json
           chmod +x staging/amd64/llmproxy staging/arm64/llmproxy-arm64 staging/amd64/start.sh staging/arm64/start.sh
           tar czf assets/llmproxy-linux-amd64.tar.gz -C staging/amd64 .
           tar czf assets/llmproxy-linux-arm64.tar.gz -C staging/arm64 .
