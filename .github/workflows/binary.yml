@@ -78,23 +78,19 @@ jobs:
 
       - name: Prepare release assets
         run: |
-          mkdir -p assets/config
-          cp llmproxy/llmproxy assets/
-          cp llmproxy-arm64/llmproxy-arm64 assets/
-          cp start.sh assets/start.sh
-          cp config/config.json assets/config/config.json
-          chmod +x assets/llmproxy assets/llmproxy-arm64 assets/start.sh
-          gzip -k assets/llmproxy
-          gzip -k assets/llmproxy-arm64
-          tar czf assets/config.tar.gz -C assets config/config.json
+          mkdir -p staging/amd64/config staging/arm64/config
+          cp llmproxy/llmproxy staging/amd64/
+          cp llmproxy-arm64/llmproxy-arm64 staging/arm64/
+          cp start.sh staging/amd64/ staging/arm64/
+          cp config/config.json staging/amd64/config/
+          cp config/config.json staging/arm64/config/
+          chmod +x staging/amd64/llmproxy staging/arm64/llmproxy-arm64 staging/amd64/start.sh staging/arm64/start.sh
+          tar czf assets/llmproxy-linux-amd64.tar.gz -C staging/amd64 .
+          tar czf assets/llmproxy-linux-arm64.tar.gz -C staging/arm64 .
 
       - name: Upload release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            assets/llmproxy
-            assets/llmproxy.gz
-            assets/llmproxy-arm64
-            assets/llmproxy-arm64.gz
-            assets/start.sh
-            assets/config.tar.gz
+            assets/llmproxy-linux-amd64.tar.gz
+            assets/llmproxy-linux-arm64.tar.gz
