@@ -78,7 +78,7 @@ jobs:
 
       - name: Prepare release assets
         run: |
-          mkdir -p staging/amd64/config staging/arm64/config
+          mkdir -p assets staging/amd64/config staging/arm64/config
           cp llmproxy/llmproxy staging/amd64/
           cp llmproxy-arm64/llmproxy-arm64 staging/arm64/
           cp start.sh staging/amd64/start.sh
