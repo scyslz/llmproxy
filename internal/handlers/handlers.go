@@ -449,7 +449,28 @@ func (m *Manager) HandleListRequestLogs(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
+	m.resolveLogDetail(logs)
 	writeJSON(w, 200, logs)
+}
+
+// resolveLogDetail overwrites the persisted has_detail flags with a real-time
+// check against the system log store, so stale or buffered values don't drive
+// the Detail buttons in the UI.
+func (m *Manager) resolveLogDetail(logs []logstore.RequestLog) {
+	ids := make([]string, 0, len(logs))
+	for _, l := range logs {
+		ids = append(ids, l.RequestID)
+	}
+	if len(ids) == 0 {
+		return
+	}
+	present, err := m.SysStore.HasRequestIDs(ids)
+	if err != nil {
+		return
+	}
+	for i := range logs {
+		logs[i].HasDetail = present[logs[i].RequestID]
+	}
 }
 
 func (m *Manager) HandleRequestLogsStats(w http.ResponseWriter, r *http.Request) {

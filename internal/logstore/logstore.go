@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -150,6 +151,47 @@ func (s *SystemStore) Insert(ts int64, level, category string, file int, message
 		"INSERT INTO system_logs (time, level, category, file, message, request_id) VALUES (?,?,?,?,?,?)",
 		ts, level, nullStr(category), nullInt(file), message, nullStrPtr(requestID))
 	return err
+}
+
+// HasRequestIDs returns the subset of request ids that have at least one
+// system-log row, queried in real time from the database.
+func (s *SystemStore) HasRequestIDs(ids []string) (map[string]bool, error) {
+	present := make(map[string]bool, len(ids))
+	var valid []string
+	seen := make(map[string]bool)
+	for _, id := range ids {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		valid = append(valid, id)
+	}
+	if len(valid) == 0 {
+		return present, nil
+	}
+	placeholders := strings.Repeat("?,", len(valid))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]interface{}, len(valid))
+	for i, id := range valid {
+		args[i] = id
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows, err := s.db.Query(
+		"SELECT DISTINCT request_id FROM system_logs WHERE request_id IN ("+placeholders+")",
+		args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		present[id] = true
+	}
+	return present, rows.Err()
 }
 
 // Query returns system logs filtered by the given criteria.
