@@ -386,6 +386,9 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, h *handlerC
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
 			body.Write(buf[:n])
+			if stream {
+				parser.Push(string(buf[:n]))
+			}
 			if _, werr := w.Write(buf[:n]); werr != nil {
 				errMsg = "client closed connection"
 				statusOut = 499

@@ -215,8 +215,10 @@ func (s *SystemStore) Clear() error {
 	if _, err := s.db.Exec("DELETE FROM system_logs"); err != nil {
 		return err
 	}
-	_, err := s.db.Exec("DELETE FROM sqlite_sequence WHERE name = 'system_logs'")
-	return err
+	_, _ = s.db.Exec("DELETE FROM sqlite_sequence WHERE name = 'system_logs'")
+	// VACUUM reclaims the freed pages so Size() reflects the real footprint.
+	_, _ = s.db.Exec("VACUUM")
+	return nil
 }
 
 // ClearFile drops logs belonging to the given file bucket (log rotation).
@@ -372,8 +374,12 @@ func (s *RequestStore) Stats(f QueryFilter) (count, prompt, completion, cached, 
 func (s *RequestStore) Clear() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err := s.db.Exec("DELETE FROM request_logs")
-	return err
+	if _, err := s.db.Exec("DELETE FROM request_logs"); err != nil {
+		return err
+	}
+	// VACUUM reclaims the freed pages so the on-disk size reflects reality.
+	_, _ = s.db.Exec("VACUUM")
+	return nil
 }
 
 // Close closes the underlying database.
