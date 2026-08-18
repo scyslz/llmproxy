@@ -192,6 +192,7 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 	if model, ok := reqBody["model"].(string); ok {
 		h.reqModel = model
 	}
+	origModel := h.reqModel
 
 	for _, p := range cands {
 		if a.Breaker.InCooldown(p.ID) {
@@ -200,9 +201,9 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// 模型校验与替换（仅 POST/PUT 且有 model）
+		// 模型校验与替换（仅 POST/PUT 且有 model），每轮基于用户原始请求模型重新判断
 		candBody := reqBody
-		candModel := h.reqModel
+		candModel := origModel
 		if (h.method == "POST" || h.method == "PUT") && candModel != "" {
 			if !containsStr(p.Models, candModel) && len(p.Models) > 0 {
 				fallback := orDefault(p.DefaultModel, p.Models[0])
@@ -216,6 +217,7 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 				cb["model"] = fallback
 				candBody = cb
 				candModel = fallback
+				h.reqModel = fallback
 			}
 		}
 
