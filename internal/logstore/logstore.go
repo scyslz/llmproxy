@@ -78,7 +78,30 @@ func openDB(path string) (*sql.DB, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(maxOpenConns)
+	db.SetMaxIdleConns(1)
 	return db, nil
+}
+
+// ensureColumn migrates legacy tables by adding a column if it is missing.
+func ensureColumn(db *sql.DB, table, column, ddl string) error {
+	rows, err := db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, ctype string
+		var dflt interface{}
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	_, err = db.Exec("ALTER TABLE " + table + " ADD COLUMN " + ddl)
+	return err
 }
 
 // OpenSystem opens (creating if needed) the system log database at path.
@@ -100,6 +123,10 @@ func OpenSystem(path string) (*SystemStore, error) {
 		CREATE INDEX IF NOT EXISTS idx_syslog_time ON system_logs(time);
 		CREATE INDEX IF NOT EXISTS idx_syslog_level ON system_logs(level);
 	`); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := ensureColumn(db, "system_logs", "request_id", "request_id TEXT"); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -184,9 +211,11 @@ func (s *SystemStore) Query(level, category, requestID string, sinceID int64, li
 		var t int64
 		var reqID sql.NullString
 		var file sql.NullInt64
-		if err := rows.Scan(&l.ID, &t, &l.Level, &l.Category, &file, &l.Message, &reqID); err != nil {
+		var category sql.NullString
+		if err := rows.Scan(&l.ID, &t, &l.Level, &category, &file, &l.Message, &reqID); err != nil {
 			return nil, total, err
 		}
+		l.Category = category.String
 		l.Timestamp = time.UnixMilli(t).UTC().Format("2006-01-02T15:04:05.000Z")
 		if file.Valid {
 			l.File = int(file.Int64)
@@ -275,6 +304,14 @@ func OpenRequest(path string, max int) (*RequestStore, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := ensureColumn(db, "request_logs", "request_id", "request_id TEXT"); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := ensureColumn(db, "request_logs", "has_detail", "has_detail INTEGER NOT NULL DEFAULT 0"); err != nil {
+		db.Close()
+		return nil, err
+	}
 	if max <= 0 {
 		max = 10000
 	}
@@ -336,7 +373,8 @@ func (s *RequestStore) Query(f QueryFilter, limit, offset int) ([]RequestLog, er
 	for rows.Next() {
 		var l RequestLog
 		var t int64
-		var id, keyName, keyID, model, provider, path, method string
+		var id string
+		var keyName, keyID, model, provider, path, method sql.NullString
 		var pt, ct, cat, tt, dur, stream int
 		var status int
 		var hasDetail int
@@ -347,8 +385,8 @@ func (s *RequestStore) Query(f QueryFilter, limit, offset int) ([]RequestLog, er
 		}
 		l = RequestLog{
 			ID: id, Timestamp: time.UnixMilli(t).UTC().Format("2006-01-02T15:04:05.000Z"),
-			KeyName: keyName, KeyID: keyID, Model: model, Provider: provider,
-			Path: path, Method: method, PromptTokens: pt, CompletionToks: ct,
+			KeyName: keyName.String, KeyID: keyID.String, Model: model.String, Provider: provider.String,
+			Path: path.String, Method: method.String, PromptTokens: pt, CompletionToks: ct,
 			CachedTokens: cat, TotalTokens: tt, Status: status, DurationMS: dur,
 			Stream: stream == 1, Error: errCol.String, HasDetail: hasDetail == 1,
 			RequestID: rid.String,
