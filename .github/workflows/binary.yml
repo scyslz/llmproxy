@@ -86,6 +86,7 @@ jobs:
           chmod +x assets/llmproxy assets/llmproxy-arm64 assets/start.sh
           gzip -k assets/llmproxy
           gzip -k assets/llmproxy-arm64
+          tar czf assets/config.tar.gz -C assets config/config.json
 
       - name: Upload release
         uses: softprops/action-gh-release@v2
@@ -96,4 +97,4 @@ jobs:
             assets/llmproxy-arm64
             assets/llmproxy-arm64.gz
             assets/start.sh
-            assets/config/config.json
+            assets/config.tar.gz
