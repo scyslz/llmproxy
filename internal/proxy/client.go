@@ -90,9 +90,11 @@ func (p *UsageParser) Push(text string) {
 			Usage *struct {
 				PromptTokens     int `json:"prompt_tokens"`
 				CompletionTokens int `json:"completion_tokens"`
+				CachedTokens     int `json:"cached_tokens"`
 				Details          *struct {
 					CachedTokens int `json:"cached_tokens"`
 				} `json:"prompt_tokens_details"`
+				CacheHitTokens int `json:"prompt_cache_hit_tokens"`
 			} `json:"usage"`
 		}
 		if err := json.Unmarshal([]byte(data), &obj); err != nil {
@@ -106,8 +108,13 @@ func (p *UsageParser) Push(text string) {
 				PromptTokens:     obj.Usage.PromptTokens,
 				CompletionTokens: obj.Usage.CompletionTokens,
 			}
-			if obj.Usage.Details != nil {
+			switch {
+			case obj.Usage.Details != nil && obj.Usage.Details.CachedTokens > 0:
 				u.CachedTokens = obj.Usage.Details.CachedTokens
+			case obj.Usage.CacheHitTokens > 0:
+				u.CachedTokens = obj.Usage.CacheHitTokens
+			case obj.Usage.CachedTokens > 0:
+				u.CachedTokens = obj.Usage.CachedTokens
 			}
 			p.Usage = u
 		}

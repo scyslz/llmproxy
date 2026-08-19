@@ -11,7 +11,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const maxOpenConns = 1
+const maxOpenConns = 4
 
 // SystemLog is the row model for the system_logs table.
 type SystemLog struct {
@@ -58,14 +58,14 @@ type QueryFilter struct {
 
 // SystemStore persists system/proxy logs.
 type SystemStore struct {
-	mu       sync.Mutex
+	mu       sync.RWMutex
 	db       *sql.DB
 	sizePath string
 }
 
 // RequestStore persists per-request usage logs.
 type RequestStore struct {
-	mu  sync.Mutex
+	mu  sync.RWMutex
 	db  *sql.DB
 	max int
 }
@@ -74,12 +74,14 @@ func openDB(path string) (*sql.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path)
+	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(maxOpenConns)
-	db.SetMaxIdleConns(1)
+	db.SetMaxIdleConns(2)
+	db.SetConnMaxLifetime(0)
 	return db, nil
 }
 
@@ -134,13 +136,18 @@ func OpenSystem(path string) (*SystemStore, error) {
 	return &SystemStore{db: db, sizePath: path}, nil
 }
 
-// Size returns the current on-disk size in bytes of the database file.
+// Size returns the current on-disk size in bytes of the database file,
+// including any un-checkpointed WAL data.
 func (s *SystemStore) Size() int64 {
 	fi, err := os.Stat(s.sizePath)
 	if err != nil {
 		return 0
 	}
-	return fi.Size()
+	size := fi.Size()
+	if fi2, err := os.Stat(s.sizePath + "-wal"); err == nil {
+		size += fi2.Size()
+	}
+	return size
 }
 
 // Insert appends a system log row.
@@ -175,8 +182,8 @@ func (s *SystemStore) HasRequestIDs(ids []string) (map[string]bool, error) {
 	for i, id := range valid {
 		args[i] = id
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	rows, err := s.db.Query(
 		"SELECT DISTINCT request_id FROM system_logs WHERE request_id IN ("+placeholders+")",
 		args...)
@@ -226,8 +233,8 @@ func (s *SystemStore) Query(level, category, requestID string, sinceID int64, li
 			where += c
 		}
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	if sinceID <= 0 {
 		if err := s.db.QueryRow("SELECT COUNT(*) FROM system_logs"+where, args...).Scan(&total); err != nil {
@@ -287,7 +294,9 @@ func (s *SystemStore) Clear() error {
 		return err
 	}
 	_, _ = s.db.Exec("DELETE FROM sqlite_sequence WHERE name = 'system_logs'")
-	// VACUUM reclaims the freed pages so Size() reflects the real footprint.
+	// Checkpoint to fold any WAL frames back, then VACUUM reclaims the freed
+	// pages so Size() reflects the real footprint.
+	_, _ = s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
 	_, _ = s.db.Exec("VACUUM")
 	return nil
 }
@@ -302,8 +311,8 @@ func (s *SystemStore) ClearFile(file int) error {
 
 // Count returns the total number of stored system logs.
 func (s *SystemStore) Count() (int64, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	var c int64
 	err := s.db.QueryRow("SELECT COUNT(*) FROM system_logs").Scan(&c)
 	return c, err
@@ -399,8 +408,8 @@ func (s *RequestStore) Insert(l *RequestLog) error {
 
 // Query returns request logs with filters, newest first, paginated.
 func (s *RequestStore) Query(f QueryFilter, limit, offset int) ([]RequestLog, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	where, args := buildFilters(f)
 	rows, err := s.db.Query(
 		"SELECT id, time, key_name, key_id, model, provider, path, method, "+
@@ -440,8 +449,8 @@ func (s *RequestStore) Query(f QueryFilter, limit, offset int) ([]RequestLog, er
 
 // Stats aggregates token usage over filtered rows.
 func (s *RequestStore) Stats(f QueryFilter) (count, prompt, completion, cached, total int64, err error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	where, args := buildFilters(f)
 	err = s.db.QueryRow(
 		"SELECT COUNT(*), COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), "+
@@ -457,7 +466,8 @@ func (s *RequestStore) Clear() error {
 	if _, err := s.db.Exec("DELETE FROM request_logs"); err != nil {
 		return err
 	}
-	// VACUUM reclaims the freed pages so the on-disk size reflects reality.
+	// Checkpoint then VACUUM so the on-disk size reflects reality.
+	_, _ = s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
 	_, _ = s.db.Exec("VACUUM")
 	return nil
 }

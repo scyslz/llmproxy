@@ -45,9 +45,12 @@ type handlerCtx struct {
 	apiKey       string
 	keyName      string
 	reqModel     string
-	degradedFrom []string
-	timedOut     bool
-}
+		degradedFrom []string
+		timedOut     bool
+		lastStatus   int
+		lastProvider string
+		failureLogged bool
+	}
 
 func (h *handlerCtx) proxyLog(a *App, level, msg string) {
 	if h.logDetail != "off" {
@@ -217,9 +220,9 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 				cb["model"] = fallback
 				candBody = cb
 				candModel = fallback
-				h.reqModel = fallback
 			}
 		}
+		h.reqModel = candModel
 
 		targetURL := ResolveTargetURL(p.BaseURL, p.OpenAIEndpoint, h.origPath)
 		sub := h.origPath
@@ -246,7 +249,7 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 		// 并发控制（覆盖整个转发+回传周期）
 		sem := a.Sem(p.ID, p.Concurrency)
 
-		res, cancelFn, aborted, reason, timeoutErr := a.forwardOnce(h, p, candBody, targetURL, r.Context(), sem)
+		res, cancelFn, aborted, reason, status, timeoutErr := a.forwardOnce(h, p, candBody, targetURL, r.Context(), sem)
 		if aborted {
 			h.proxyLog(a, logging.LevelWarn, "[API Proxy Aborted] Client closed connection ("+spanMs(h.start)+")")
 			a.logRequest(h, p.Name, h.reqModel, 499, 0, 0, 0, 0, false, "client closed connection")
@@ -263,6 +266,10 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 			h.timedOut = true
 		}
 		h.degradedFrom = append(h.degradedFrom, p.Name+" ("+reason+")")
+		h.lastStatus = status
+		h.lastProvider = p.Name
+		h.failureLogged = true
+		a.logRequest(h, p.Name, candModel, status, 0, 0, 0, 0, false, reason)
 		h.proxyLog(a, logging.LevelWarn, "[API Proxy Degrade] "+p.Name+" failed: "+reason+", trying next provider")
 	}
 
@@ -276,16 +283,21 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 	if h.timedOut {
 		status = 504
 		errMsg = "Upstream timeout: " + last
+	} else if h.lastStatus >= 400 {
+		status = h.lastStatus
+		errMsg = "Provider gateway error: " + last
 	}
 	h.proxyLog(a, levelFor(h.timedOut), "[API Proxy "+
 		ifAny(h.timedOut, "Timeout", "Error")+"] All providers failed: "+last+" ("+spanMs(h.start)+")")
-	a.logRequest(h, "", h.reqModel, status, 0, 0, 0, 0, false, last)
+	if !h.failureLogged {
+		a.logRequest(h, h.lastProvider, h.reqModel, status, 0, 0, 0, 0, false, last)
+	}
 	writeJSON(w, status, map[string]string{"error": errMsg})
 }
 
 // forwardOnce 对单个 provider 发起请求。res 非空表示成功；cancelFn 需在
 // resp.Body 读取完毕后调用（推迟取消，避免流式响应被提前中断）。
-func (a *App) forwardOnce(h *handlerCtx, p *Provider, candBody map[string]interface{}, targetURL string, clientCtx context.Context, sem *Semaphore) (res *http.Response, cancelFn context.CancelFunc, aborted bool, reason string, timeoutErr bool) {
+func (a *App) forwardOnce(h *handlerCtx, p *Provider, candBody map[string]interface{}, targetURL string, clientCtx context.Context, sem *Semaphore) (res *http.Response, cancelFn context.CancelFunc, aborted bool, reason string, status int, timeoutErr bool) {
 	if sem != nil {
 		sem.Acquire()
 		defer sem.Release()
@@ -325,20 +337,20 @@ func (a *App) forwardOnce(h *handlerCtx, p *Provider, candBody map[string]interf
 	if err != nil {
 		cancel()
 		if clientCtx.Err() == context.Canceled {
-			return nil, nil, true, "", false
+			return nil, nil, true, "", 0, false
 		}
 		if timeoutErrState {
-			return nil, nil, false, "timeout after " + p.Timeout.String(), true
+			return nil, nil, false, "timeout after " + p.Timeout.String(), 504, true
 		}
-		return nil, nil, false, "connection error: " + err.Error(), false
+		return nil, nil, false, "connection error: " + err.Error(), 502, false
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 64*1024))
 		resp.Body.Close()
 		cancel()
-		return nil, nil, false, "HTTP " + itoa(resp.StatusCode), false
+		return nil, nil, false, "HTTP " + itoa(resp.StatusCode), resp.StatusCode, false
 	}
-	return resp, cancel, false, "", false
+	return resp, cancel, false, "", resp.StatusCode, false
 }
 
 // streamResponse 将成功上游响应回传给客户端，同时统计 usage 并写请求日志。
@@ -461,9 +473,11 @@ func parseUsageJSON(data []byte) (*Usage, string) {
 		Usage *struct {
 			PromptTokens     int `json:"prompt_tokens"`
 			CompletionTokens int `json:"completion_tokens"`
+			CachedTokens     int `json:"cached_tokens"`
 			Details          *struct {
 				CachedTokens int `json:"cached_tokens"`
 			} `json:"prompt_tokens_details"`
+			CacheHitTokens int `json:"prompt_cache_hit_tokens"`
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(data, &obj); err != nil {
@@ -473,8 +487,13 @@ func parseUsageJSON(data []byte) (*Usage, string) {
 		return nil, obj.Model
 	}
 	u := &Usage{PromptTokens: obj.Usage.PromptTokens, CompletionTokens: obj.Usage.CompletionTokens}
-	if obj.Usage.Details != nil {
+	switch {
+	case obj.Usage.Details != nil && obj.Usage.Details.CachedTokens > 0:
 		u.CachedTokens = obj.Usage.Details.CachedTokens
+	case obj.Usage.CacheHitTokens > 0:
+		u.CachedTokens = obj.Usage.CacheHitTokens
+	case obj.Usage.CachedTokens > 0:
+		u.CachedTokens = obj.Usage.CachedTokens
 	}
 	return u, obj.Model
 }

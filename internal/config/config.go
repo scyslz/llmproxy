@@ -2,8 +2,10 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"llmproxy/internal/domain"
@@ -37,6 +39,9 @@ func New(configDir string) (*Manager, error) {
 	}
 	injectEnv(cfg)
 	cfg = normalize(cfg)
+	if err := validate(cfg); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		return nil, err
 	}
@@ -249,6 +254,50 @@ func normalize(cfg *domain.Config) *domain.Config {
 		cfg.Keys = []domain.VirtualKey{}
 	}
 	return cfg
+}
+
+// validate performs startup-time schema checks and returns an error for
+// configuration that would fail at runtime or is clearly mistyped.
+func validate(cfg *domain.Config) error {
+	if !strings.HasPrefix(cfg.Listen, ":") {
+		return fmt.Errorf("config: listen %q must start with ':' (e.g. :3000)", cfg.Listen)
+	}
+	switch cfg.LogDetail {
+	case "", "off", "basic", "error", "all":
+	default:
+		return fmt.Errorf("config: logDetail %q must be one of off|basic|error|all", cfg.LogDetail)
+	}
+	if cfg.MaxLogSizeMB < 0 {
+		return fmt.Errorf("config: maxLogSizeMB must be >= 0, got %d", cfg.MaxLogSizeMB)
+	}
+	if cfg.MaxRequestLogs < 0 {
+		return fmt.Errorf("config: maxRequestLogs must be >= 0, got %d", cfg.MaxRequestLogs)
+	}
+	seen := map[string]bool{}
+	for _, p := range cfg.Providers {
+		if p.ID == "" {
+			return fmt.Errorf("config: provider %q missing id", p.Name)
+		}
+		if seen[p.ID] {
+			return fmt.Errorf("config: duplicate provider id %q", p.ID)
+		}
+		seen[p.ID] = true
+		if p.BaseURL == "" {
+			return fmt.Errorf("config: provider %q missing baseUrl", p.ID)
+		}
+		if p.Timeout < 0 {
+			return fmt.Errorf("config: provider %q timeout must be >= 0, got %d", p.ID, p.Timeout)
+		}
+		if p.Concurrency < 0 {
+			return fmt.Errorf("config: provider %q concurrency must be >= 0, got %d", p.ID, p.Concurrency)
+		}
+	}
+	for _, k := range cfg.Keys {
+		if k.Key == "" {
+			return fmt.Errorf("config: virtual key %q missing key", k.Name)
+		}
+	}
+	return nil
 }
 
 func cloneConfig(c *domain.Config) *domain.Config {
