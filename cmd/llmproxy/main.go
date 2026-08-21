@@ -8,6 +8,7 @@ import (
 	"llmproxy/internal/auth"
 	"llmproxy/internal/circuit"
 	"llmproxy/internal/config"
+	"llmproxy/internal/lazyhealth"
 	"llmproxy/internal/logging"
 	"llmproxy/internal/logstore"
 	"llmproxy/internal/proxy"
@@ -47,9 +48,10 @@ func main() {
 	client := proxy.NewClient()
 	adm := auth.NewAdmin()
 	logger := logging.New(cfg, sysStore)
+	health := lazyhealth.New()
 
 	// 代理引擎
-	proxyApp := proxy.NewApp(cfg, breaker, client, logger, reqStore)
+	proxyApp := proxy.NewApp(cfg, breaker, client, logger, reqStore, health)
 
 	// 启动
 	server.Run(cfg, sysStore, reqStore, logger, adm, proxyApp)

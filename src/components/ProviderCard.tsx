@@ -57,6 +57,7 @@ export default function ProviderCard({
     defaultModel: ""
   });
   const [showApiKeyId, setShowApiKeyId] = useState<string | null>(null);
+  const [showApiKeyForm, setShowApiKeyForm] = useState(false);
 
   // New states for API model fetching and keyword filtering
   const [isFetchingModels, setIsFetchingModels] = useState(false);
@@ -220,6 +221,10 @@ export default function ProviderCard({
       .map((m) => m.trim())
       .filter((m) => m !== "");
 
+    const defaultModel = (formData.defaultModel.trim() && models.includes(formData.defaultModel.trim()))
+      ? formData.defaultModel.trim()
+      : undefined;
+
     const submissionData = {
       id: formData.id.toLowerCase().trim(),
       name: formData.name.trim(),
@@ -228,7 +233,7 @@ export default function ProviderCard({
       models,
       concurrency: formData.concurrency || 0,
       openaiEndpoint: formData.openaiEndpoint.trim() || undefined,
-      defaultModel: formData.defaultModel.trim() || undefined
+      defaultModel
     };
 
     if (isEditing === "new") {
@@ -337,15 +342,20 @@ export default function ProviderCard({
               <label className="text-xs font-semibold text-neutral-700">API Key / Token (Saved Server-Side)</label>
               <div className="relative">
                 <input
-                  type="password"
+                  type={showApiKeyForm ? "text" : "password"}
                   placeholder="Bearer Key (Leave empty to use client keys)"
                   value={formData.apiKey}
                   onChange={(e) => setFormData({ ...formData, apiKey: e.target.value })}
-                  className="w-full bg-white border border-neutral-300 rounded-xl pl-3.5 pr-16 py-2 text-sm text-neutral-800 outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 font-mono shadow-2xs"
+                  className="w-full bg-white border border-neutral-300 rounded-xl pl-3.5 pr-12 py-2 text-sm text-neutral-800 outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 font-mono shadow-2xs"
                 />
-                <span className="absolute inset-y-0 right-3 flex items-center text-[10px] text-emerald-600 font-bold uppercase tracking-wider bg-emerald-50 px-2 my-1.5 rounded border border-emerald-200 pointer-events-none">
-                  Secure
-                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowApiKeyForm(!showApiKeyForm)}
+                  className="absolute inset-y-0 right-0 px-3 flex items-center text-neutral-400 hover:text-neutral-700 transition-colors cursor-pointer"
+                  title={showApiKeyForm ? "Hide key" : "Show key"}
+                >
+                  {showApiKeyForm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
             </div>
 
@@ -458,14 +468,25 @@ export default function ProviderCard({
                 </div>
               )}
 
-              <textarea
-                required
-                rows={2}
-                placeholder="gpt-4o, gpt-4o-mini, o1-mini"
-                value={formData.modelsString}
-                onChange={(e) => setFormData({ ...formData, modelsString: e.target.value })}
-                className="w-full bg-neutral-50 border border-neutral-300 rounded-xl px-3.5 py-2 text-sm font-mono text-neutral-800 outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 focus:bg-white transition-colors"
-              />
+              <div className="relative">
+                <textarea
+                  rows={2}
+                  placeholder="gpt-4o, gpt-4o-mini, o1-mini"
+                  value={formData.modelsString}
+                  onChange={(e) => setFormData({ ...formData, modelsString: e.target.value })}
+                  className="w-full bg-neutral-50 border border-neutral-300 rounded-xl px-3.5 py-2 text-sm font-mono text-neutral-800 outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 focus:bg-white transition-colors"
+                />
+                {formData.modelsString.trim() !== "" && (
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, modelsString: "", defaultModel: "" })}
+                    className="absolute right-2 top-1.5 p-1 rounded-md text-neutral-400 hover:text-red-500 hover:bg-red-50 transition-colors cursor-pointer"
+                    title="Clear all models"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
 
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-neutral-700">Default Model (fallback)</label>

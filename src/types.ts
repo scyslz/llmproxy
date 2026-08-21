@@ -13,8 +13,39 @@ export interface Provider {
 export interface VirtualKey {
   key: string;
   name: string;
+  groupId?: string;
   providerIds: string[];
   createdAt: string;
+}
+
+export interface GroupEntry {
+  providerId: string;
+  models: string[];
+}
+
+export interface ProviderGroup {
+  id: string;
+  name: string;
+  entries: GroupEntry[];
+  createdAt: string;
+}
+
+export interface GroupHealthEntry {
+  providerId: string;
+  model: string;
+  available: boolean;
+  failCount: number;
+  cooldownMs: number;
+  remainingMs: number;
+}
+
+export interface GroupTestEntry {
+  providerId: string;
+  model: string;
+  ok: boolean;
+  status: number;
+  durationMs: number;
+  error?: string;
 }
 
 export interface SystemLog {

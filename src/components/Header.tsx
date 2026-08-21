@@ -1,13 +1,13 @@
 import { Provider, VirtualKey } from "../types";
-import { Cpu, ShieldCheck, ShieldAlert, Layers, Terminal, Play, Radio, Lock, Activity } from "lucide-react";
+import { Cpu, ShieldCheck, ShieldAlert, Layers, Terminal, Play, Radio, Lock, Activity, GitBranch } from "lucide-react";
 
 interface HeaderProps {
   providers: Provider[];
   virtualKeys: VirtualKey[];
   enableVirtualKey: boolean;
   enableAdminAuth?: boolean;
-  activeTab: "providers" | "keys" | "playground" | "logs" | "requestlogs" | "settings";
-  setActiveTab: (tab: "providers" | "keys" | "playground" | "logs" | "requestlogs" | "settings") => void;
+  activeTab: "providers" | "groups" | "keys" | "playground" | "logs" | "requestlogs" | "settings";
+  setActiveTab: (tab: "providers" | "groups" | "keys" | "playground" | "logs" | "requestlogs" | "settings") => void;
 }
 
 export default function Header({
@@ -81,6 +81,7 @@ export default function Header({
         <div className="max-w-7xl mx-auto px-3.5 sm:px-6 flex space-x-1 overflow-x-auto no-scrollbar">
           {([
             { id: "providers", label: "Providers", icon: <Layers className="w-4 h-4" /> },
+            { id: "groups", label: "Groups", icon: <GitBranch className="w-4 h-4" /> },
             { id: "keys", label: "Virtual Keys", icon: <ShieldCheck className="w-4 h-4" /> },
             { id: "playground", label: "Playground", icon: <Play className="w-4 h-4" /> },
             { id: "logs", label: "System Logs", icon: <Terminal className="w-4 h-4" /> },

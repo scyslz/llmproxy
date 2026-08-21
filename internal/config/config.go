@@ -128,6 +128,7 @@ type rawConfig struct {
 	MaxRequestLogs   *int           `json:"maxRequestLogs"`
 	ActiveLogFile    *int           `json:"activeLogFile"`
 	Providers        []rawProvider  `json:"providers"`
+	Groups           []rawGroup     `json:"groups"`
 	Keys             []rawKey       `json:"keys"`
 }
 
@@ -152,8 +153,21 @@ type rawProvider struct {
 type rawKey struct {
 	Key         string   `json:"key"`
 	Name        string   `json:"name"`
+	GroupID     string   `json:"groupId"`
 	ProviderIDs []string `json:"providerIds"`
 	CreatedAt   string   `json:"createdAt"`
+}
+
+type rawGroupEntry struct {
+	ProviderID string   `json:"providerId"`
+	Models     []string `json:"models,omitempty"`
+}
+
+type rawGroup struct {
+	ID      string           `json:"id"`
+	Name    string           `json:"name"`
+	Entries []rawGroupEntry  `json:"entries"`
+	CreatedAt string         `json:"createdAt"`
 }
 
 func boolOr(v *bool, def bool) bool {
@@ -195,10 +209,20 @@ func mergeConfig(base *domain.Config, raw *rawConfig, m map[string]json.RawMessa
 		}
 		out.Providers = ps
 	}
+	if raw.Groups != nil {
+		gs := make([]domain.ProviderGroup, 0, len(raw.Groups))
+		for _, rg := range raw.Groups {
+			gs = append(gs, domain.ProviderGroup{ID: rg.ID, Name: rg.Name, CreatedAt: rg.CreatedAt})
+			for _, re := range rg.Entries {
+				gs[len(gs)-1].Entries = append(gs[len(gs)-1].Entries, domain.GroupEntry{ProviderID: re.ProviderID, Models: re.Models})
+			}
+		}
+		out.Groups = gs
+	}
 	if raw.Keys != nil {
 		ks := make([]domain.VirtualKey, 0, len(raw.Keys))
 		for _, rk := range raw.Keys {
-			ks = append(ks, domain.VirtualKey{Key: rk.Key, Name: rk.Name, ProviderIDs: rk.ProviderIDs, CreatedAt: rk.CreatedAt})
+			ks = append(ks, domain.VirtualKey{Key: rk.Key, Name: rk.Name, GroupID: rk.GroupID, ProviderIDs: rk.ProviderIDs, CreatedAt: rk.CreatedAt})
 		}
 		out.Keys = ks
 	}
@@ -250,6 +274,9 @@ func normalize(cfg *domain.Config) *domain.Config {
 	if cfg.Providers == nil {
 		cfg.Providers = []domain.Provider{}
 	}
+	if cfg.Groups == nil {
+		cfg.Groups = []domain.ProviderGroup{}
+	}
 	if cfg.Keys == nil {
 		cfg.Keys = []domain.VirtualKey{}
 	}
@@ -291,6 +318,16 @@ func validate(cfg *domain.Config) error {
 		if p.Concurrency < 0 {
 			return fmt.Errorf("config: provider %q concurrency must be >= 0, got %d", p.ID, p.Concurrency)
 		}
+	}
+	seenGroups := map[string]bool{}
+	for _, g := range cfg.Groups {
+		if g.ID == "" {
+			return fmt.Errorf("config: group %q missing id", g.Name)
+		}
+		if seenGroups[g.ID] {
+			return fmt.Errorf("config: duplicate group id %q", g.ID)
+		}
+		seenGroups[g.ID] = true
 	}
 	for _, k := range cfg.Keys {
 		if k.Key == "" {

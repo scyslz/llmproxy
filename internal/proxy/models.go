@@ -33,7 +33,7 @@ func (a *App) HandleModels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	cands, _ := a.selectCandidates(cfg, apiKey, nil)
+	cands, _, _ := a.selectCandidates(cfg, apiKey, nil)
 	models := []string{}
 	seen := map[string]bool{}
 	for _, p := range cands {
@@ -70,7 +70,7 @@ func (a *App) HandleDirectChat(w http.ResponseWriter, r *http.Request, providerI
 	for i := range cfg.Providers {
 		if cfg.Providers[i].ID == providerID {
 			pp := cfg.Providers[i]
-			p = providerFromDomain(&pp)
+			p = ProviderFromDomain(&pp)
 			break
 		}
 	}

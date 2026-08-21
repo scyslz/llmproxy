@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"io"
 	"math/rand"
 	"net/http"
 	"os"
@@ -275,6 +276,7 @@ func (m *Manager) HandleCreateKey(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name        string   `json:"name"`
 		ProviderIDs []string `json:"providerIds"`
+		GroupID     string   `json:"groupId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, 400, map[string]string{"error": "Invalid request body"})
@@ -296,6 +298,7 @@ func (m *Manager) HandleCreateKey(w http.ResponseWriter, r *http.Request) {
 	vk := domain.VirtualKey{
 		Key:         key,
 		Name:        body.Name,
+		GroupID:     body.GroupID,
 		ProviderIDs: body.ProviderIDs,
 		CreatedAt:   time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
 	}
@@ -335,6 +338,7 @@ func (m *Manager) HandleUpdateKey(w http.ResponseWriter, r *http.Request, key st
 	var body struct {
 		Name        string   `json:"name"`
 		ProviderIDs []string `json:"providerIds"`
+		GroupID     string   `json:"groupId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, 400, map[string]string{"error": "Invalid request body"})
@@ -350,6 +354,7 @@ func (m *Manager) HandleUpdateKey(w http.ResponseWriter, r *http.Request, key st
 			if c.Keys[i].Key == key {
 				c.Keys[i].Name = body.Name
 				c.Keys[i].ProviderIDs = body.ProviderIDs
+				c.Keys[i].GroupID = body.GroupID
 				found = true
 				return
 			}
@@ -576,3 +581,249 @@ func btoa(b bool) string {
 // Package-level init guards
 var _ = os.DevNull
 var _ = filepath.Separator
+
+// --- Groups ---
+
+type groupResult struct {
+	ProviderID  string `json:"providerId"`
+	Model       string `json:"model"`
+	Available   bool   `json:"available"`
+	FailCount   int    `json:"failCount"`
+	CooldownMs  int64  `json:"cooldownMs"`
+	RemainingMs int64  `json:"remainingMs"`
+}
+
+func (m *Manager) HandleListGroups(w http.ResponseWriter, _ *http.Request) {
+	cfg := m.Cfg.Get()
+	if cfg.Groups == nil {
+		cfg.Groups = []domain.ProviderGroup{}
+	}
+	writeJSON(w, 200, cfg.Groups)
+}
+
+func (m *Manager) HandleCreateGroup(w http.ResponseWriter, r *http.Request) {
+	var g domain.ProviderGroup
+	if err := json.NewDecoder(r.Body).Decode(&g); err != nil {
+		writeJSON(w, 400, map[string]string{"error": "Invalid request body"})
+		return
+	}
+	if g.ID == "" || g.Name == "" {
+		writeJSON(w, 400, map[string]string{"error": "Missing required fields (id, name)"})
+		return
+	}
+	if g.Entries == nil {
+		g.Entries = []domain.GroupEntry{}
+	}
+	if err := m.Cfg.Update(func(c *domain.Config) {
+		for i := range c.Groups {
+			if c.Groups[i].ID == g.ID {
+				c.Groups[i].Name = g.Name
+				c.Groups[i].Entries = g.Entries
+				return
+			}
+		}
+		g.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+		c.Groups = append(c.Groups, g)
+	}); err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	m.Log.Log(logging.LevelInfo, "Created group: "+g.Name+" ("+g.ID+")", "system", "")
+	writeJSON(w, 201, g)
+}
+
+func (m *Manager) HandleUpdateGroup(w http.ResponseWriter, r *http.Request, id string) {
+	var body map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, 400, map[string]string{"error": "Invalid request body"})
+		return
+	}
+	if err := m.Cfg.Update(func(c *domain.Config) {
+		for i := range c.Groups {
+			if c.Groups[i].ID == id {
+				if v, ok := body["name"].(string); ok {
+					c.Groups[i].Name = v
+				}
+				if v, ok := body["entries"].([]interface{}); ok {
+					entries := make([]domain.GroupEntry, 0, len(v))
+					for _, e := range v {
+						mm, _ := e.(map[string]interface{})
+						pe, _ := mm["providerId"].(string)
+						var me []string
+						if mv, ok := mm["models"].([]interface{}); ok {
+							me = make([]string, len(mv))
+							for j, m := range mv {
+								if s, ok := m.(string); ok {
+									me[j] = s
+								}
+							}
+						}
+						entries = append(entries, domain.GroupEntry{ProviderID: pe, Models: me})
+					}
+					c.Groups[i].Entries = entries
+				}
+				break
+			}
+		}
+	}); err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	cfg := m.Cfg.Get()
+	for i := range cfg.Groups {
+		if cfg.Groups[i].ID == id {
+			m.Log.Log(logging.LevelInfo, "Updated group: "+cfg.Groups[i].Name+" ("+id+")", "system", "")
+			writeJSON(w, 200, cfg.Groups[i])
+			return
+		}
+	}
+	writeJSON(w, 404, map[string]string{"error": "Group not found"})
+}
+
+func (m *Manager) HandleDeleteGroup(w http.ResponseWriter, _ *http.Request, id string) {
+	deleted := false
+	if err := m.Cfg.Update(func(c *domain.Config) {
+		for i := range c.Groups {
+			if c.Groups[i].ID == id {
+				c.Groups = append(c.Groups[:i], c.Groups[i+1:]...)
+				deleted = true
+				return
+			}
+		}
+	}); err != nil {
+		writeJSON(w, 500, map[string]string{"error": err.Error()})
+		return
+	}
+	if !deleted {
+		writeJSON(w, 404, map[string]string{"error": "Group not found"})
+		return
+	}
+	m.Log.Log(logging.LevelInfo, "Deleted group: "+id, "system", "")
+	writeJSON(w, 200, map[string]interface{}{"deleted": true})
+}
+
+func (m *Manager) HandleGroupHealth(w http.ResponseWriter, _ *http.Request, id string) {
+	cfg := m.Cfg.Get()
+	var grp *domain.ProviderGroup
+	for i := range cfg.Groups {
+		if cfg.Groups[i].ID == id {
+			grp = &cfg.Groups[i]
+			break
+		}
+	}
+	if grp == nil {
+		writeJSON(w, 404, map[string]string{"error": "Group not found"})
+		return
+	}
+	providerMap := map[string]domain.Provider{}
+	for _, p := range cfg.Providers {
+		providerMap[p.ID] = p
+	}
+	results := []groupResult{}
+	snap := m.ProxyApp.Health.Snapshot()
+	for _, e := range grp.Entries {
+		p, ok := providerMap[e.ProviderID]
+		if !ok {
+			results = append(results, groupResult{ProviderID: e.ProviderID, Available: false})
+			continue
+		}
+		models := e.Models
+		if len(models) == 0 {
+			models = p.Models
+			if len(models) == 0 && p.DefaultModel != "" {
+				models = []string{p.DefaultModel}
+			}
+		}
+		for _, model := range models {
+			if model == "" {
+				continue
+			}
+			if s, ok := snap[e.ProviderID+"|"+model]; ok {
+				results = append(results, groupResult{
+					ProviderID:  e.ProviderID,
+					Model:       model,
+					Available:   false,
+					FailCount:   s.FailCount,
+					CooldownMs:  s.CooldownMs,
+					RemainingMs: s.RemainingMs,
+				})
+			} else {
+				results = append(results, groupResult{ProviderID: e.ProviderID, Model: model, Available: true})
+			}
+		}
+	}
+	writeJSON(w, 200, results)
+}
+
+// testResult holds per-model one-shot test outcome.
+type testResult struct {
+	ProviderID string `json:"providerId"`
+	Model      string `json:"model"`
+	OK         bool   `json:"ok"`
+	Status     int    `json:"status"`
+	DurationMS int64  `json:"durationMs"`
+	Error      string `json:"error,omitempty"`
+}
+
+func (m *Manager) HandleGroupTest(w http.ResponseWriter, r *http.Request, id string) {
+	cfg := m.Cfg.Get()
+	var grp *domain.ProviderGroup
+	for i := range cfg.Groups {
+		if cfg.Groups[i].ID == id {
+			grp = &cfg.Groups[i]
+			break
+		}
+	}
+	if grp == nil {
+		writeJSON(w, 404, map[string]string{"error": "Group not found"})
+		return
+	}
+	providerMap := map[string]*proxy.Provider{}
+	for _, p := range cfg.Providers {
+		providerMap[p.ID] = proxy.ProviderFromDomain(&p)
+	}
+	results := []testResult{}
+	for _, e := range grp.Entries {
+		p, ok := providerMap[e.ProviderID]
+		if !ok {
+			results = append(results, testResult{ProviderID: e.ProviderID, OK: false, Error: "provider not found"})
+			continue
+		}
+		models := e.Models
+		if len(models) == 0 {
+			models = p.Models
+			if len(models) == 0 && p.DefaultModel != "" {
+				models = []string{p.DefaultModel}
+			}
+		}
+		for _, model := range models {
+			if model == "" {
+				continue
+			}
+			start := time.Now()
+			bodyBytes, _ := json.Marshal(map[string]interface{}{
+				"model":      model,
+				"messages":   []map[string]string{{"role": "user", "content": "hi"}},
+				"max_tokens": 1,
+			})
+			targetURL := proxy.ResolveTargetURL(p.BaseURL, p.OpenAIEndpoint, "/v1/chat/completions")
+			resp, err := m.ProxyApp.Client.Do(r.Context(), "POST", targetURL,
+				http.Header{"Content-Type": {"application/json"}, "Authorization": {"Bearer " + p.APIKey}},
+				strings.NewReader(string(bodyBytes)),
+				5*time.Second)
+			dur := time.Since(start).Milliseconds()
+			if err != nil {
+				results = append(results, testResult{ProviderID: e.ProviderID, Model: model, OK: false, Error: err.Error(), DurationMS: dur})
+				continue
+			}
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			results = append(results, testResult{
+				ProviderID: e.ProviderID, Model: model,
+				OK: resp.StatusCode >= 200 && resp.StatusCode < 300,
+				Status: resp.StatusCode, DurationMS: dur,
+			})
+		}
+	}
+	writeJSON(w, 200, results)
+}

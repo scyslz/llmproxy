@@ -1,20 +1,22 @@
 import React, { useState } from "react";
-import { VirtualKey, Provider } from "../types";
-import { Key, Copy, Check, Trash2, Plus, ShieldCheck, ShieldAlert, ToggleLeft, ToggleRight, ChevronUp, ChevronDown } from "lucide-react";
+import { VirtualKey, Provider, ProviderGroup } from "../types";
+import { Key, Copy, Check, Trash2, Plus, ShieldCheck, ShieldAlert, ToggleLeft, ToggleRight, ChevronUp, ChevronDown, GitBranch } from "lucide-react";
 
 interface KeyManagerProps {
   keys: VirtualKey[];
   providers: Provider[];
+  groups: ProviderGroup[];
   enableVirtualKey: boolean;
   onToggleVirtualKey: (enabled: boolean) => void;
   onCreateKey: (name: string, providerIds: string[]) => void;
+  onUpdateKey: (keyStr: string, name: string, providerIds: string[], groupId?: string) => void;
   onDeleteKey: (keyStr: string) => void;
-  onUpdateKey: (keyStr: string, name: string, providerIds: string[]) => void;
 }
 
 export default function KeyManager({
   keys,
   providers,
+  groups,
   enableVirtualKey,
   onToggleVirtualKey,
   onCreateKey,
@@ -24,6 +26,7 @@ export default function KeyManager({
   const [name, setName] = useState("");
   const [selectedProviders, setSelectedProviders] = useState<string[]>([]);
   const [scopeMode, setScopeMode] = useState<"all" | "custom">("all");
+  const [selectedGroupId, setSelectedGroupId] = useState<string>("");
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [editingKey, setEditingKey] = useState<VirtualKey | null>(null);
@@ -56,13 +59,14 @@ export default function KeyManager({
     if (!name.trim()) return;
     const finalProviders = scopeMode === "all" ? ["all"] : selectedProviders;
     if (editingKey) {
-      onUpdateKey(editingKey.key, name.trim(), finalProviders);
+      onUpdateKey(editingKey.key, name.trim(), finalProviders, selectedGroupId || undefined);
     } else {
-      onCreateKey(name.trim(), finalProviders);
+      onCreateKey(name.trim(), finalProviders, selectedGroupId || undefined);
     }
     setName("");
     setSelectedProviders([]);
     setScopeMode("all");
+    setSelectedGroupId("");
     setIsAdding(false);
     setEditingKey(null);
   };
@@ -77,6 +81,7 @@ export default function KeyManager({
       setScopeMode("custom");
       setSelectedProviders(k.providerIds);
     }
+    setSelectedGroupId(k.groupId || "");
     setIsAdding(true);
   };
 
@@ -279,6 +284,27 @@ export default function KeyManager({
                 </div>
               )}
             </div>
+
+            {groups.length > 0 && (
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-neutral-500 block">Or bind to a Group (recommended)</label>
+                <select
+                  value={selectedGroupId}
+                  onChange={(e) => setSelectedGroupId(e.target.value)}
+                  className="w-full bg-white border border-neutral-250 rounded-xl px-3.5 py-2 text-sm text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400"
+                >
+                  <option value="">-- None --</option>
+                  {groups.map((g) => (
+                    <option key={g.id} value={g.id}>{g.name} ({g.providerIds.length} providers)</option>
+                  ))}
+                </select>
+                {selectedGroupId && (
+                  <p className="text-[10px] text-neutral-400">
+                    Selected group uses lazy health probes with 30s/60s/90s cooldown per provider/model on failure.
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="flex space-x-2 pt-2">
               <button

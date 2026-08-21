@@ -1,7 +1,17 @@
 package proxy
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"llmproxy/internal/circuit"
+	"llmproxy/internal/config"
+	"llmproxy/internal/domain"
+	"llmproxy/internal/lazyhealth"
+	"llmproxy/internal/logging"
+	"llmproxy/internal/logstore"
 )
 
 func TestUsageParserStreaming(t *testing.T) {
@@ -138,7 +148,7 @@ func TestSelectCandidates(t *testing.T) {
 	a := &App{}
 	cfg := testConfig()
 	// unbound key -> enabled providers
-	cands, bound := a.selectCandidates(cfg, "unknown-key", nil)
+	cands, bound, _ := a.selectCandidates(cfg, "unknown-key", nil)
 	if bound {
 		t.Fatal("unknown key should not bind")
 	}
@@ -148,7 +158,7 @@ func TestSelectCandidates(t *testing.T) {
 
 	// bound key with specific providerIds
 	var name string
-	cands, bound = a.selectCandidates(cfg, "sk-test-bound", &name)
+	cands, bound, _ = a.selectCandidates(cfg, "sk-test-bound", &name)
 	if !bound {
 		t.Fatal("bound key should bind")
 	}
@@ -160,11 +170,170 @@ func TestSelectCandidates(t *testing.T) {
 	}
 
 	// bound key with providerIds = ["all"] -> global enabled
-	cands, bound = a.selectCandidates(cfg, "sk-test-all", nil)
+	cands, bound, _ = a.selectCandidates(cfg, "sk-test-all", nil)
 	if bound {
 		t.Fatal("all key should not bind")
 	}
 	if len(cands) != 2 {
 		t.Fatalf("all key candidates = %d, want 2", len(cands))
+	}
+}
+
+func TestSelectCandidates_Group(t *testing.T) {
+	a := &App{}
+	cfg := testConfig()
+
+	// bound key with groupId -> group providers in order
+	cands, bound, fromGroup := a.selectCandidates(cfg, "sk-test-group", nil)
+	if !bound || !fromGroup {
+		t.Fatalf("group key should bind and flag fromGroup")
+	}
+	if len(cands) != 2 || cands[0].ID != "mock" || cands[1].ID != "backup" {
+		t.Fatalf("group candidates wrong: %+v", cands)
+	}
+
+	// groupId pointing to non-existent group falls back to providerIds (empty) -> global enabled, not bound
+	cands, bound, fromGroup = a.selectCandidates(cfg, "sk-test-group-miss", nil)
+	if bound || fromGroup {
+		t.Fatal("missing group should not bind")
+	}
+	if len(cands) != 2 {
+		t.Fatalf("fallback candidates = %d, want 2", len(cands))
+	}
+}
+
+func TestGroup_DegradeWithLazyHealth(t *testing.T) {
+	failSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer failSrv.Close()
+
+	okSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"model":"ok","usage":{"prompt_tokens":1,"completion_tokens":1}}`))
+	}))
+	defer okSrv.Close()
+
+	tmp := t.TempDir()
+	cm, err := config.New(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &domain.Config{
+		Listen:           ":0",
+		EnableVirtualKey: true,
+		LogDetail:        "basic",
+		Providers: []domain.Provider{
+			{ID: "fail", Name: "Fail P", BaseURL: failSrv.URL, APIKey: "k", Enabled: true, Models: []string{"m"}, DefaultModel: "m", Timeout: 2000},
+			{ID: "ok", Name: "Ok P", BaseURL: okSrv.URL, APIKey: "k", Enabled: true, Models: []string{"m"}, DefaultModel: "m", Timeout: 2000},
+		},
+		Groups: []domain.ProviderGroup{
+			{ID: "g", Name: "G", Entries: []domain.GroupEntry{{ProviderID: "fail"}, {ProviderID: "ok"}}},
+		},
+		Keys: []domain.VirtualKey{
+			{Key: "sk", Name: "K", GroupID: "g"},
+		},
+	}
+	if err := cm.Replace(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	reqStore, err := logstore.OpenRequest(tmp+"/requests.db", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reqStore.Close()
+	sysStore, err := logstore.OpenSystem(tmp + "/system.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sysStore.Close()
+
+	health := lazyhealth.New()
+	a := &App{
+		Cfg:     cm,
+		Breaker: circuit.NewBreaker(),
+		Client:  NewClient(),
+		Logger:  logging.New(cm, sysStore),
+		ReqLog:  reqStore,
+		Health:  health,
+	}
+
+	// First request: fail then ok -> logs two entries (p1=500, p2=200)
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"m","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer sk")
+	rec := httptest.NewRecorder()
+	a.HandleProxy(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	logs, err := reqStore.Query(logstore.QueryFilter{}, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("total logs: %d", len(logs))
+	for i, l := range logs {
+		t.Logf("log[%d]: Provider=%s Model=%s Status=%d Error=%s", i, l.Provider, l.Model, l.Status, l.Error)
+	}
+	if len(logs) < 2 {
+		t.Fatalf("request logs = %d, want >=2", len(logs))
+	}
+	// logs are newest-first; find fail and ok entries
+	var failLog, okLog *logstore.RequestLog
+	for i := range logs {
+		if logs[i].Provider == "Fail P" {
+			failLog = &logs[i]
+		}
+		if logs[i].Provider == "Ok P" {
+			okLog = &logs[i]
+		}
+	}
+	if failLog == nil || failLog.Status != 500 {
+		t.Fatalf("missing fail log, got: %+v", failLog)
+	}
+	if okLog == nil || okLog.Status != 200 {
+		t.Fatalf("missing ok log, got: %+v", okLog)
+	}
+
+	// Second request immediately: fail P should be in cooldown (30s)
+	req2 := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"m","messages":[]}`))
+	req2.Header.Set("Authorization", "Bearer sk")
+	rec2 := httptest.NewRecorder()
+	a.HandleProxy(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("second request status = %d, want 200", rec2.Code)
+	}
+
+	logs2, err := reqStore.Query(logstore.QueryFilter{}, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Should be 3 total: fail+ok (first request) + ok (second request, fail skipped by cooldown)
+	if len(logs2) != 3 {
+		t.Fatalf("total logs after cooldown = %d, want 3", len(logs2))
+	}
+	// Find the second-request ok log (most recent ok)
+	var secondOk *logstore.RequestLog
+	for i := range logs2 {
+		if logs2[i].Provider == "Ok P" && logs2[i].Error == "" {
+			secondOk = &logs2[i]
+		}
+	}
+	if secondOk == nil {
+		t.Fatalf("missing second ok log: %+v", logs2)
+	}
+	// Verify health state
+	snap := health.Snapshot()
+	s, ok := snap["fail|m"]
+	if !ok {
+		t.Fatal("fail|m should be in health tracker")
+	}
+	if !s.InCooldown {
+		t.Fatal("fail|m should be in cooldown")
+	}
+	if s.FailCount != 1 {
+		t.Fatalf("failCount = %d, want 1", s.FailCount)
 	}
 }

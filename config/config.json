@@ -19,7 +19,6 @@
         "mock-model",
         "1234"
       ],
-      "concurrency": 0,
       "openaiEndpoint": "/chat/completions",
       "defaultModel": "1234"
     },
@@ -30,12 +29,29 @@
       "apiKey": "bad-key",
       "enabled": true,
       "models": [
-        "mock-model",
         "1234"
       ],
-      "concurrency": 0,
       "openaiEndpoint": "/chat/completions",
       "defaultModel": "1234"
+    }
+  ],
+  "groups": [
+    {
+      "id": "g_mt35hq0i",
+      "name": "fd",
+      "entries": [
+        {
+          "providerId": "mock",
+          "models": [
+            "mock-model",
+            "1234"
+          ]
+        },
+        {
+          "providerId": "bad"
+        }
+      ],
+      "createdAt": "2026-08-21T16:15:21Z"
     }
   ],
   "keys": [

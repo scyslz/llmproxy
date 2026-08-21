@@ -18,8 +18,23 @@ type Provider struct {
 type VirtualKey struct {
 	Key         string   `json:"key"`
 	Name        string   `json:"name"`
+	GroupID     string   `json:"groupId,omitempty"`
 	ProviderIDs []string `json:"providerIds,omitempty"`
 	CreatedAt   string   `json:"createdAt"`
+}
+
+// GroupEntry is one link in a provider fallback chain, at provider+models granularity.
+type GroupEntry struct {
+	ProviderID string   `json:"providerId"`
+	Models     []string `json:"models,omitempty"` // empty = use provider all models
+}
+
+// ProviderGroup is an ordered set of provider/model entries used as a fallback chain.
+type ProviderGroup struct {
+	ID          string      `json:"id"`
+	Name        string      `json:"name"`
+	Entries     []GroupEntry `json:"entries"`
+	CreatedAt   string      `json:"createdAt"`
 }
 
 // Settings is the subset of config exposed to the dashboard settings API.
@@ -43,9 +58,10 @@ type Config struct {
 	LogBody          bool         `json:"logBody"`
 	MaxLogSizeMB     int          `json:"maxLogSizeMB"`
 	MaxRequestLogs   int          `json:"maxRequestLogs"`
-	ActiveLogFile    int          `json:"activeLogFile"`
-	Providers        []Provider   `json:"providers"`
-	Keys             []VirtualKey `json:"keys"`
+	ActiveLogFile    int             `json:"activeLogFile"`
+	Providers        []Provider      `json:"providers"`
+	Groups           []ProviderGroup `json:"groups,omitempty"`
+	Keys             []VirtualKey    `json:"keys"`
 }
 
 // ToSettings converts the config into the dashboard-facing settings object.

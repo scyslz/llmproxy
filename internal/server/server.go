@@ -118,6 +118,46 @@ func Run(cfg *config.Manager, sysStore *logstore.SystemStore, reqStore *logstore
 		}
 	})
 
+	// --- Groups ---
+	mux.HandleFunc("/api/groups", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case "GET":
+			hand.HandleListGroups(w, r)
+		case "POST":
+			hand.HandleCreateGroup(w, r)
+		default:
+			http.Error(w, "Method not allowed", 405)
+		}
+	})
+	mux.HandleFunc("/api/groups/", func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/groups/"), "/")
+		if len(parts) == 0 || parts[0] == "" {
+			http.NotFound(w, r)
+			return
+		}
+		id := parts[0]
+		if len(parts) >= 2 {
+			switch parts[1] {
+			case "health":
+				hand.HandleGroupHealth(w, r, id)
+				return
+			case "test":
+				hand.HandleGroupTest(w, r, id)
+				return
+			}
+		}
+		switch r.Method {
+		case "GET":
+			http.NotFound(w, r)
+		case "PUT":
+			hand.HandleUpdateGroup(w, r, id)
+		case "DELETE":
+			hand.HandleDeleteGroup(w, r, id)
+		default:
+			http.Error(w, "Method not allowed", 405)
+		}
+	})
+
 	// --- Logs ---
 	// 注意：/api/logs/* 路由注册顺序靠前的优先匹配
 	mux.HandleFunc("/api/logs/status", hand.HandleLogsStatus)

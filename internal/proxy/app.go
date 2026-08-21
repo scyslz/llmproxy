@@ -14,23 +14,25 @@ import (
 	"llmproxy/internal/circuit"
 	"llmproxy/internal/config"
 	"llmproxy/internal/domain"
+	"llmproxy/internal/lazyhealth"
 	"llmproxy/internal/logging"
 	"llmproxy/internal/logstore"
 )
 
-// App 承载代理转发所需的状态（配置、熔断器、上游客户端、日志）。
+// App 承载代理转发所需的状态（配置、熔断器、上游客户端、日志、健康状态）。
 type App struct {
 	Cfg     *config.Manager
 	Breaker *circuit.Breaker
 	Client  *Client
 	Logger  *logging.Logger
 	ReqLog  *logstore.RequestStore
+	Health  *lazyhealth.Tracker
 }
 
 // NewApp 构造代理引擎。
 func NewApp(cfg *config.Manager, br *circuit.Breaker, cl *Client,
-	log *logging.Logger, req *logstore.RequestStore) *App {
-	return &App{Cfg: cfg, Breaker: br, Client: cl, Logger: log, ReqLog: req}
+	log *logging.Logger, req *logstore.RequestStore, health *lazyhealth.Tracker) *App {
+	return &App{Cfg: cfg, Breaker: br, Client: cl, Logger: log, ReqLog: req, Health: health}
 }
 
 // handlerCtx 携带单次转发所需上下文。
@@ -64,13 +66,13 @@ func enabledCandidates(ps []domain.Provider) []*Provider {
 	for _, p := range ps {
 		pp := p
 		if p.Enabled {
-			out = append(out, providerFromDomain(&pp))
+			out = append(out, ProviderFromDomain(&pp))
 		}
 	}
 	return out
 }
 
-func providerFromDomain(p *domain.Provider) *Provider {
+func ProviderFromDomain(p *domain.Provider) *Provider {
 	return &Provider{
 		ID:        p.ID,
 		Name:      p.Name,
@@ -85,9 +87,9 @@ func providerFromDomain(p *domain.Provider) *Provider {
 }
 
 // selectCandidates 解析 virtual key 并返回候选 provider 链与绑定标记。
-// 返回 (候选, 已绑定)。绑定 key（providerIds 有具体值）不检查 enabled；
-// 不绑定 / all / 通配则走全局 enabled 集合。
-func (a *App) selectCandidates(cfg *domain.Config, apiKey string, keyName *string) ([]*Provider, bool) {
+// 返回 (候选, 已绑定, 来自Group)。key 的 groupId 优先：展开为组内有序 provider 链；
+// 无 groupId 时回退 providerIds；再回退全局 enabled 集合。
+func (a *App) selectCandidates(cfg *domain.Config, apiKey string, keyName *string) ([]*Provider, bool, bool) {
 	if apiKey != "" {
 		for i := range cfg.Keys {
 			if cfg.Keys[i].Key == apiKey {
@@ -95,6 +97,26 @@ func (a *App) selectCandidates(cfg *domain.Config, apiKey string, keyName *strin
 					*keyName = cfg.Keys[i].Name
 				}
 				vk := &cfg.Keys[i]
+				if vk.GroupID != "" {
+				if group := findGroup(cfg, vk.GroupID); group != nil {
+					cands := []*Provider{}
+					for _, e := range group.Entries {
+						for j := range cfg.Providers {
+							if cfg.Providers[j].ID == e.ProviderID {
+								pp := cfg.Providers[j]
+								p := ProviderFromDomain(&pp)
+								if len(e.Models) > 0 {
+									p.DefaultModel = e.Models[0]
+								}
+								cands = append(cands, p)
+								break
+							}
+						}
+					}
+					return cands, true, true
+				}
+				// groupId references nonexistent group -> fall through to providerIds
+			}
 				if len(vk.ProviderIDs) > 0 {
 					isAll := false
 					for _, id := range vk.ProviderIDs {
@@ -109,19 +131,28 @@ func (a *App) selectCandidates(cfg *domain.Config, apiKey string, keyName *strin
 							for j := range cfg.Providers {
 								if cfg.Providers[j].ID == id {
 									pp := cfg.Providers[j]
-									cands = append(cands, providerFromDomain(&pp))
+									cands = append(cands, ProviderFromDomain(&pp))
 									break
 								}
 							}
 						}
-						return cands, true
+						return cands, true, false
 					}
 				}
-				return enabledCandidates(cfg.Providers), false
+				return enabledCandidates(cfg.Providers), false, false
 			}
 		}
 	}
-	return enabledCandidates(cfg.Providers), false
+	return enabledCandidates(cfg.Providers), false, false
+}
+
+func findGroup(cfg *domain.Config, id string) *domain.ProviderGroup {
+	for i := range cfg.Groups {
+		if cfg.Groups[i].ID == id {
+			return &cfg.Groups[i]
+		}
+	}
+	return nil
 }
 
 // sem 返回 provider 维度的全局信号量（registry 跨配置变更保留）。
@@ -183,7 +214,7 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	cands, bound := a.selectCandidates(h.cfg, h.apiKey, &h.keyName)
+	cands, bound, fromGroup := a.selectCandidates(h.cfg, h.apiKey, &h.keyName)
 	if !bound && len(cands) == 0 {
 		msg := "No active provider enabled or allowed for request to " + h.origPath
 		h.proxyLog(a, logging.LevelError, msg)
@@ -198,9 +229,18 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 	origModel := h.reqModel
 
 	for _, p := range cands {
+		// Group 路由: 懒探测冷却判断（provider+model 粒度）
+		if fromGroup && h.reqModel != "" {
+			if a.Health.InCooldown(p.ID, h.reqModel) {
+				h.degradedFrom = append(h.degradedFrom, p.Name+" (cooldown/"+h.reqModel+")")
+				h.proxyLog(a, logging.LevelWarn, "[API Proxy] Skipping "+p.Name+"/"+h.reqModel+" (in cooldown)")
+				continue
+			}
+		}
+		// circuit breaker（兼容：始终检查，与 group 冷却互不干扰）
 		if a.Breaker.InCooldown(p.ID) {
-			h.degradedFrom = append(h.degradedFrom, p.Name+" (cooldown)")
-			h.proxyLog(a, logging.LevelWarn, "[API Proxy Degrade] Skipping "+p.Name+" (in cooldown), trying next provider")
+			h.degradedFrom = append(h.degradedFrom, p.Name+" (circuit-breaker)")
+			h.proxyLog(a, logging.LevelWarn, "[API Proxy Degrade] Skipping "+p.Name+" (circuit breaker), trying next provider")
 			continue
 		}
 
@@ -257,11 +297,17 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 		}
 		if res != nil {
 			a.Breaker.RecordSuccess(p.ID)
+			if fromGroup {
+				a.Health.RecordSuccess(p.ID, candModel)
+			}
 			a.streamResponse(w, r, h, p, res, isStream(res))
 			cancelFn()
 			return
 		}
 		a.Breaker.RecordFailure(p.ID)
+		if fromGroup {
+			a.Health.RecordFailure(p.ID, h.reqModel)
+		}
 		if timeoutErr {
 			h.timedOut = true
 		}

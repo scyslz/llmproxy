@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Provider, VirtualKey, SystemLog } from "./types";
+import { Provider, VirtualKey, SystemLog, ProviderGroup, GroupTestEntry } from "./types";
 import { motion, AnimatePresence } from "motion/react";
 import Header from "./components/Header";
 import ProviderCard from "./components/ProviderCard";
 import KeyManager from "./components/KeyManager";
+import GroupCard from "./components/GroupCard";
 import Playground from "./components/Playground";
 import TerminalLogs from "./components/TerminalLogs";
 import RequestLogs from "./components/RequestLogs";
@@ -13,13 +14,14 @@ import { apiFetch, setAdminToken } from "./lib/api";
 import { Cpu, Terminal, Shield, Sparkles, CheckCircle2 } from "lucide-react";
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<"providers" | "keys" | "playground" | "logs" | "requestlogs" | "settings">("providers");
+  const [activeTab, setActiveTab] = useState<"providers" | "groups" | "keys" | "playground" | "logs" | "requestlogs" | "settings">("providers");
   const [enableAdminAuth, setEnableAdminAuth] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   
   // App state
   const [providers, setProviders] = useState<Provider[]>([]);
   const [virtualKeys, setVirtualKeys] = useState<VirtualKey[]>([]);
+  const [groups, setGroups] = useState<ProviderGroup[]>([]);
   const [enableVirtualKey, setEnableVirtualKey] = useState(false);
   const [logs, setLogs] = useState<SystemLog[]>([]);
   const [viewRequestId, setViewRequestId] = useState<string | null>(null);
@@ -30,6 +32,8 @@ export default function App() {
   const [isPollingLogs, setIsPollingLogs] = useState(true);
   const [playgroundKey, setPlaygroundKey] = useState("");
   const [playgroundModel, setPlaygroundModel] = useState("");
+  const [groupTestResults, setGroupTestResults] = useState<GroupTestEntry[] | null>(null);
+  const [isTestingGroup, setIsTestingGroup] = useState(false);
   const lastLogIdRef = useRef(0);
 
   const fetchSystemLogs = useCallback(async () => {
@@ -70,19 +74,21 @@ export default function App() {
         }
       }
 
-      const [provRes, keyRes, setRes, logRes] = await Promise.all([
+      const [provRes, keyRes, grpRes, setRes, logRes] = await Promise.all([
         apiFetch("/api/providers"),
         apiFetch("/api/keys"),
+        apiFetch("/api/groups"),
         apiFetch("/api/settings"),
         apiFetch("/api/logs?limit=15")
       ]);
 
-      if (!provRes.ok || !keyRes.ok || !setRes.ok || !logRes.ok) {
+      if (!provRes.ok || !keyRes.ok || !grpRes.ok || !setRes.ok || !logRes.ok) {
         throw new Error("Failed to sync some application settings from server.");
       }
 
       const providersData = await provRes.json();
       const keysData = await keyRes.json();
+      setGroups(await grpRes.json());
       const settingsData = await setRes.json();
       const logsDataRaw = await logRes.json();
 
@@ -205,12 +211,12 @@ export default function App() {
     }
   };
 
-  const handleCreateKey = async (name: string, providerIds: string[]) => {
+  const handleCreateKey = async (name: string, providerIds: string[], groupId?: string) => {
     try {
       const res = await apiFetch("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, providerIds })
+        body: JSON.stringify({ name, providerIds, groupId })
       });
       if (!res.ok) throw new Error("Failed to create virtual key");
       const created = await res.json();
@@ -230,12 +236,12 @@ export default function App() {
     }
   };
 
-  const handleUpdateKey = async (keyStr: string, name: string, providerIds: string[]) => {
+  const handleUpdateKey = async (keyStr: string, name: string, providerIds: string[], groupId?: string) => {
     try {
       const res = await apiFetch(`/api/keys/${keyStr}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, providerIds })
+        body: JSON.stringify({ name, providerIds, groupId })
       });
       if (!res.ok) throw new Error("Failed to update virtual key");
       const updated = await res.json();
@@ -358,6 +364,51 @@ export default function App() {
             </motion.div>
           )}
 
+          {activeTab === "groups" && (
+            <motion.div
+              key="groups"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              transition={{ duration: 0.15 }}
+            >
+              <GroupCard
+                groups={groups}
+                providers={providers}
+                onCreate={async (g) => {
+                  const res = await apiFetch("/api/groups", { method: "POST", body: JSON.stringify(g) });
+                  if (!res.ok) throw new Error("Failed to create group");
+                  const created = await res.json();
+                  setGroups((prev) => [...prev, created]);
+                }}
+                onUpdate={async (id, patch) => {
+                  const res = await apiFetch("/api/groups/" + id, { method: "PUT", body: JSON.stringify(patch) });
+                  if (!res.ok) throw new Error("Failed to update group");
+                  const updated = await res.json();
+                  setGroups((prev) => prev.map((g) => g.id === id ? updated : g));
+                }}
+                onDelete={async (id) => {
+                  const res = await apiFetch("/api/groups/" + id, { method: "DELETE" });
+                  if (!res.ok) throw new Error("Failed to delete group");
+                  setGroups((prev) => prev.filter((g) => g.id !== id));
+                  setGroupTestResults(null);
+                }}
+                onTest={async (id) => {
+                  setIsTestingGroup(true);
+                  try {
+                    const res = await apiFetch("/api/groups/" + id + "/test");
+                    if (!res.ok) throw new Error("Test failed");
+                    setGroupTestResults(await res.json());
+                  } finally {
+                    setIsTestingGroup(false);
+                  }
+                }}
+                testResults={groupTestResults}
+                isTesting={isTestingGroup}
+              />
+            </motion.div>
+          )}
+
           {activeTab === "keys" && (
             <motion.div
               key="keys"
@@ -369,6 +420,7 @@ export default function App() {
               <KeyManager
                 keys={virtualKeys}
                 providers={providers}
+                groups={groups}
                 enableVirtualKey={enableVirtualKey}
                 onToggleVirtualKey={handleToggleVirtualKey}
                 onCreateKey={handleCreateKey}
