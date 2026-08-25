@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -85,6 +86,13 @@ func (a *App) HandleDirectChat(w http.ResponseWriter, r *http.Request, providerI
 		}
 	}
 	start := time.Now()
+	h := &handlerCtx{
+		start:     start,
+		origPath:  r.URL.Path,
+		method:    r.Method,
+		requestID: reqID,
+		logDetail: logDetail,
+	}
 	directLog("info", "[Provider Test] "+p.Name+" chat completions initiated")
 
 	base := strings.TrimRight(p.BaseURL, "/")
@@ -117,19 +125,38 @@ func (a *App) HandleDirectChat(w http.ResponseWriter, r *http.Request, providerI
 		return
 	}
 
+	model := ""
+	var reqMeta struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(rawBody, &reqMeta); err == nil {
+		model = reqMeta.Model
+	}
+
 	hdr := http.Header{}
 	hdr.Set("Content-Type", "application/json")
 	if p.APIKey != "" {
 		hdr.Set("Authorization", "Bearer "+p.APIKey)
 	}
+	if logDetail == "all" {
+		a.Logger.Log(logging.LevelInfo, "[Provider Test Request Headers] "+formatHeaders(hdr), "proxy", reqID)
+	}
 
 	resp, err := a.Client.Do(r.Context(), "POST", targetURL, hdr, bytes.NewReader(rawBody), p.Timeout)
 	if err != nil {
 		directLog("error", "[Provider Test] "+p.Name+" failed: "+err.Error())
+		a.logRequest(h, p.Name, model, 502, 0, 0, 0, 0, false, "connection error: "+err.Error())
 		writeJSON(w, 502, map[string]string{"error": "Provider test failed: " + err.Error()})
 		return
 	}
 	defer resp.Body.Close()
+
+	if h.detailActiveFor(resp.StatusCode) {
+		if logDetail == "error" {
+			a.Logger.Log(logging.LevelInfo, "[Provider Test Request Headers] "+formatHeaders(hdr), "proxy", reqID)
+		}
+		a.Logger.Log(logging.LevelInfo, "[Provider Test Response Headers] "+formatHeaders(resp.Header), "proxy", reqID)
+	}
 
 	for k, vv := range resp.Header {
 		lk := strings.ToLower(k)
@@ -141,8 +168,69 @@ func (a *App) HandleDirectChat(w http.ResponseWriter, r *http.Request, providerI
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
-	directLog("info", "[Provider Test] "+p.Name+" completed with status "+itoa(resp.StatusCode)+" ("+spanMs(start)+")")
+
+	stream := isStream(resp)
+	var parser UsageParser
+	var body bytes.Buffer
+	statusOut := resp.StatusCode
+	errMsg := ""
+	resModel := model
+	var prompt, completion, cached int
+
+	buf := make([]byte, 32*1024)
+	for {
+		n, rerr := resp.Body.Read(buf)
+		if n > 0 {
+			body.Write(buf[:n])
+			if stream {
+				parser.Push(string(buf[:n]))
+			}
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				errMsg = "client closed connection"
+				statusOut = 499
+				break
+			}
+			if fl, ok := w.(http.Flusher); ok {
+				fl.Flush()
+			}
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			if r.Context().Err() == context.Canceled {
+				errMsg = "client closed connection"
+				statusOut = 499
+			} else {
+				errMsg = "stream error: " + rerr.Error()
+				statusOut = 502
+			}
+			break
+		}
+	}
+
+	if errMsg == "" {
+		if stream {
+			if parser.Model != "" {
+				resModel = parser.Model
+			}
+			if parser.Usage != nil {
+				prompt = parser.Usage.PromptTokens
+				completion = parser.Usage.CompletionTokens
+				cached = parser.Usage.CachedTokens
+			}
+		} else {
+			if usage, mm := parseUsageJSON(body.Bytes()); usage != nil {
+				resModel = mm
+				prompt = usage.PromptTokens
+				completion = usage.CompletionTokens
+				cached = usage.CachedTokens
+			}
+		}
+	}
+
+	directLog("info", "[Provider Test] "+p.Name+" completed with status "+itoa(statusOut)+" ("+spanMs(start)+")")
+	a.logRequest(h, p.Name, resModel, statusOut, prompt, completion, cached, prompt+completion, stream, errMsg)
 }
 
 // FetchRemoteModels 拉取 provider 的远程模型列表。

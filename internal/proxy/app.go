@@ -362,6 +362,9 @@ func (a *App) forwardOnce(h *handlerCtx, p *Provider, candBody map[string]interf
 	if p.APIKey != "" {
 		hdr.Set("Authorization", "Bearer "+p.APIKey)
 	}
+	if h.logDetail == "all" {
+		h.proxyLog(a, logging.LevelInfo, "[API Proxy Request Headers] "+formatHeaders(hdr))
+	}
 
 	// 超时仅作用于响应头阶段；头部到达后取消计时器，流式阶段不设限。
 	headersDone := make(chan struct{})
@@ -391,10 +394,16 @@ func (a *App) forwardOnce(h *handlerCtx, p *Provider, candBody map[string]interf
 		return nil, nil, false, "connection error: " + err.Error(), 502, false
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if h.detailActiveFor(resp.StatusCode) {
+			if h.logDetail == "error" {
+				h.proxyLog(a, logging.LevelInfo, "[API Proxy Request Headers] "+formatHeaders(hdr))
+			}
+			h.proxyLog(a, logging.LevelInfo, "[API Proxy Response Headers] "+formatHeaders(resp.Header))
+		}
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 64*1024))
 		resp.Body.Close()
 		cancel()
-		return nil, nil, false, "HTTP " + itoa(resp.StatusCode), resp.StatusCode, false
+		return nil, nil, false, "HTTP "+itoa(resp.StatusCode), resp.StatusCode, false
 	}
 	return resp, cancel, false, "", resp.StatusCode, false
 }
@@ -412,18 +421,9 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, h *handlerC
 	}
 	w.WriteHeader(resp.StatusCode)
 
-	detailActive := h.logDetail == "all" || (h.logDetail == "error" && resp.StatusCode >= 400)
+	detailActive := h.detailActiveFor(resp.StatusCode)
 	if detailActive {
-		hdrs := []string{}
-		for k, vv := range resp.Header {
-			if strings.ToLower(k) == "set-cookie" {
-				continue
-			}
-			for _, v := range vv {
-				hdrs = append(hdrs, k+": "+v)
-			}
-		}
-		h.proxyLog(a, logging.LevelInfo, "[API Proxy Response Headers] "+strings.Join(hdrs, " | "))
+		h.proxyLog(a, logging.LevelInfo, "[API Proxy Response Headers] "+formatHeaders(resp.Header))
 	}
 
 	var parser UsageParser
@@ -604,6 +604,40 @@ func ifAny(cond bool, ifTrue, ifFalse string) string {
 		return ifTrue
 	}
 	return ifFalse
+}
+
+// detailActiveFor 判断当前日志级别是否需要为给定状态码输出请求/响应头细节。
+// error 级别仅在状态码 >=400（上游报错）时输出，all 级别始终输出。
+func (h *handlerCtx) detailActiveFor(status int) bool {
+	return h.logDetail == "all" || (h.logDetail == "error" && status >= 400)
+}
+
+// formatHeaders 将 Header 拍平为 "K: V" 列表，跳过 set-cookie 并对
+// Authorization 做脱敏，避免把上游密钥写入日志。
+func formatHeaders(hdr http.Header) string {
+	parts := []string{}
+	for k, vv := range hdr {
+		lk := strings.ToLower(k)
+		if lk == "set-cookie" {
+			continue
+		}
+		for _, v := range vv {
+			if lk == "authorization" {
+				parts = append(parts, k+": "+maskAuthHeader(v))
+			} else {
+				parts = append(parts, k+": "+v)
+			}
+		}
+	}
+	return strings.Join(parts, " | ")
+}
+
+// maskAuthHeader 对 Bearer 令牌做脱敏，保留前缀。
+func maskAuthHeader(v string) string {
+	if strings.HasPrefix(v, "Bearer ") {
+		return "Bearer " + logging.MaskKey(strings.TrimPrefix(v, "Bearer "))
+	}
+	return logging.MaskKey(v)
 }
 
 func levelFor(timeout bool) string {
