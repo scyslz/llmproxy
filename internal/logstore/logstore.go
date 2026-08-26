@@ -301,12 +301,18 @@ func (s *SystemStore) Clear() error {
 	return nil
 }
 
-// ClearFile drops logs belonging to the given file bucket (log rotation).
+// ClearFile drops logs belonging to the given file bucket (log rotation)
+// and reclaims the freed pages, so subsequent Size() checks reflect the
+// surviving bucket instead of the pre-rotation peak.
 func (s *SystemStore) ClearFile(file int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err := s.db.Exec("DELETE FROM system_logs WHERE file = ? OR file IS NULL", file)
-	return err
+	if _, err := s.db.Exec("DELETE FROM system_logs WHERE file = ? OR file IS NULL", file); err != nil {
+		return err
+	}
+	_, _ = s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	_, _ = s.db.Exec("VACUUM")
+	return nil
 }
 
 // Count returns the total number of stored system logs.

@@ -150,6 +150,36 @@ func TestSystemStoreClearFile(t *testing.T) {
 	}
 }
 
+// TestSystemStoreClearFileReclaimsSize verifies that rotation (ClearFile)
+// actually shrinks the database file, so the size-based rotate check does not
+// stay pinned above the threshold after switching buckets.
+func TestSystemStoreClearFileReclaimsSize(t *testing.T) {
+	dir := tempDir(t)
+	s, err := OpenSystem(dir)
+	if err != nil {
+		t.Fatalf("OpenSystem: %v", err)
+	}
+	defer s.Close()
+
+	now := time.Now().UnixMilli()
+	for i := 0; i < 2000; i++ {
+		if err := s.Insert(now+int64(i), "info", "proxy", 1, "fill fill fill fill fill fill fill fill fill fill fill fill fill fill fill fill", nil); err != nil {
+			t.Fatalf("Insert: %v", err)
+		}
+	}
+	before := s.Size()
+	if before == 0 {
+		t.Fatal("size should be non-zero before clear")
+	}
+	if err := s.ClearFile(1); err != nil {
+		t.Fatalf("ClearFile: %v", err)
+	}
+	after := s.Size()
+	if after >= before {
+		t.Fatalf("size did not shrink after ClearFile: before=%d after=%d", before, after)
+	}
+}
+
 func TestSystemStoreHasRequestIDs(t *testing.T) {
 	dir := tempDir(t)
 	s, err := OpenSystem(dir)
