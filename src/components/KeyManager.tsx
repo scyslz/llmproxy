@@ -8,7 +8,7 @@ interface KeyManagerProps {
   groups: ProviderGroup[];
   enableVirtualKey: boolean;
   onToggleVirtualKey: (enabled: boolean) => void;
-  onCreateKey: (name: string, providerIds: string[]) => void;
+  onCreateKey: (name: string, providerIds: string[], groupId?: string) => void;
   onUpdateKey: (keyStr: string, name: string, providerIds: string[], groupId?: string) => void;
   onDeleteKey: (keyStr: string) => void;
 }
@@ -295,7 +295,7 @@ export default function KeyManager({
                 >
                   <option value="">-- None --</option>
                   {groups.map((g) => (
-                    <option key={g.id} value={g.id}>{g.name} ({g.providerIds.length} providers)</option>
+                    <option key={g.id} value={g.id}>{g.name} ({g.entries.length} providers)</option>
                   ))}
                 </select>
                 {selectedGroupId && (
