@@ -220,13 +220,14 @@ export default function RequestLogs({ virtualKeys, providers, onViewLogs }: Requ
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse min-w-[900px]">
+            <table className="w-full text-left border-collapse min-w-[980px]">
               <thead>
                 <tr className="border-b border-neutral-150 text-[10px] uppercase font-bold tracking-wider text-neutral-400">
                   <th className="py-3 pl-5 pr-3">Time</th>
                   <th className="py-3 px-3">Key</th>
                   <th className="py-3 px-3">Model</th>
                   <th className="py-3 px-3">Provider</th>
+                  <th className="py-3 px-3">Request ID</th>
                   <th className="py-3 px-3 text-right">Read</th>
                   <th className="py-3 px-3 text-right">Cached</th>
                   <th className="py-3 px-3 text-right">Write</th>
@@ -250,6 +251,19 @@ export default function RequestLogs({ virtualKeys, providers, onViewLogs }: Requ
                     </td>
                     <td className="py-2.5 px-3 font-mono text-[11px] text-blue-700 whitespace-nowrap">{log.model || "—"}</td>
                     <td className="py-2.5 px-3 text-neutral-600 whitespace-nowrap">{log.provider || "—"}</td>
+                    <td className="py-2.5 px-3 whitespace-nowrap">
+                      {log.requestId ? (
+                        <span
+                          className="font-mono text-[10px] text-neutral-500 hover:text-blue-600 transition-colors cursor-pointer"
+                          title={`Request ID: ${log.requestId} — retries and provider fallbacks of the same client request share this ID`}
+                          onClick={() => onViewLogs?.(log.requestId!, !!log.hasDetail)}
+                        >
+                          #{log.requestId.slice(0, 8)}
+                        </span>
+                      ) : (
+                        <span className="text-neutral-300 text-[10px]">—</span>
+                      )}
+                    </td>
                     <td className="py-2.5 px-3 text-right font-mono text-neutral-700">{fmtNum(log.promptTokens)}</td>
                     <td className="py-2.5 px-3 text-right font-mono text-violet-600">{fmtNum(log.cachedTokens)}</td>
                     <td className="py-2.5 px-3 text-right font-mono text-emerald-700">{fmtNum(log.completionTokens)}</td>
@@ -262,26 +276,15 @@ export default function RequestLogs({ virtualKeys, providers, onViewLogs }: Requ
                     </td>
                     <td className="py-2.5 pl-3 pr-5 text-right font-mono text-neutral-500 whitespace-nowrap">{log.durationMs}ms</td>
                     <td className="py-2.5 pl-3 pr-5 text-center whitespace-nowrap">
-                      {log.requestId ? (
-                        <div className="flex flex-col items-center gap-1">
-                          {onViewLogs && log.hasDetail && (
-                            <button
-                              onClick={() => onViewLogs(log.requestId!, !!log.hasDetail)}
-                              title="View related system logs for this request"
-                              className="inline-flex items-center space-x-1 px-2 py-1 rounded-lg text-[10px] font-bold bg-neutral-900 text-white hover:bg-neutral-800 transition-colors cursor-pointer"
-                            >
-                              <FileSearch className="w-3 h-3" />
-                              <span>Detail</span>
-                            </button>
-                          )}
-                          <span
-                            className="font-mono text-[9px] text-neutral-400 hover:text-blue-600 transition-colors cursor-pointer"
-                            title={`Request ID: ${log.requestId} — retries and provider fallbacks of the same client request share this ID`}
-                            onClick={() => onViewLogs?.(log.requestId!, !!log.hasDetail)}
-                          >
-                            #{log.requestId.slice(0, 8)}
-                          </span>
-                        </div>
+                      {log.requestId && onViewLogs && log.hasDetail ? (
+                        <button
+                          onClick={() => onViewLogs(log.requestId!, !!log.hasDetail)}
+                          title="View related system logs for this request"
+                          className="inline-flex items-center space-x-1 px-2 py-1 rounded-lg text-[10px] font-bold bg-neutral-900 text-white hover:bg-neutral-800 transition-colors cursor-pointer"
+                        >
+                          <FileSearch className="w-3 h-3" />
+                          <span>Detail</span>
+                        </button>
                       ) : (
                         <span className="text-neutral-300 text-[10px]">—</span>
                       )}
