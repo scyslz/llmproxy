@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Lock, ShieldCheck, ShieldAlert, KeyRound, Check, AlertTriangle, LogOut, Terminal, Save, Eye, EyeOff, FileText, Trash2, HardDrive } from "lucide-react";
 import { apiFetch } from "../lib/api";
+import { LogStatus } from "../types";
 
 interface SecuritySettingsProps {
   enableVirtualKey: boolean;
@@ -8,14 +9,6 @@ interface SecuritySettingsProps {
   enableAdminAuth: boolean;
   onUpdateAdminAuth: (enabled: boolean, newPassword?: string) => Promise<void>;
   onLogout: () => void;
-}
-
-interface LogStatus {
-  activeFile: number;
-  file1Size: number;
-  file2Size: number;
-  maxLogSizeMB: number;
-  totalLogs: number;
 }
 
 export default function SecuritySettings({
@@ -421,12 +414,12 @@ export default function SecuritySettings({
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2.5">
                 <HardDrive className="w-5 h-5 text-neutral-800" />
-                <h3 className="font-display font-semibold text-neutral-800 text-base">Log File Size Limit & Automatic Round-Robin</h3>
+                <h3 className="font-display font-semibold text-neutral-800 text-base">Log File Size Limit</h3>
               </div>
             </div>
 
             <p className="text-xs text-neutral-600 leading-relaxed">
-              Configures the max file size limit per log file. Uses an automatic round-robin storage mechanism in the background. When a file reaches the limit, writing automatically switches over to prevent unlimited disk growth.
+              Configures the maximum size of the system log database (system_logs.db). When the limit is reached, the oldest log bucket is dropped automatically to prevent unlimited disk growth.
             </p>
 
             {logStatus && (
@@ -435,7 +428,7 @@ export default function SecuritySettings({
                   <span>Current Disk Log Storage Usage:</span>
                 </div>
                 <div className="font-mono font-bold text-neutral-800 text-sm">
-                  {formatSize(logStatus.file1Size + logStatus.file2Size)} <span className="text-neutral-400 font-normal text-xs">/ {selectedMaxSize * 2} MB Max Capacity</span>
+                  {formatSize(logStatus.totalSize)} <span className="text-neutral-400 font-normal text-xs">/ {selectedMaxSize} MB Max Capacity</span>
                 </div>
               </div>
             )}

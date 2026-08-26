@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { SystemLog } from "../types";
+import { SystemLog, LogStatus } from "../types";
 import { Trash2, AlertCircle, Info, AlertTriangle, RefreshCw, FileText, Filter, X, FileSearch } from "lucide-react";
 
 interface TerminalLogsProps {
@@ -10,14 +10,6 @@ interface TerminalLogsProps {
   setIsPolling: (polling: boolean) => void;
   viewRequestId?: string;
   onClearView?: () => void;
-}
-
-interface LogStatus {
-  activeFile: number;
-  file1Size: number;
-  file2Size: number;
-  maxLogSizeMB: number;
-  totalLogs: number;
 }
 
 export default function TerminalLogs({ logs, onClear, onRefresh, isPolling, setIsPolling, viewRequestId, onClearView }: TerminalLogsProps) {
@@ -128,7 +120,7 @@ export default function TerminalLogs({ logs, onClear, onRefresh, isPolling, setI
           {logStatus && (
             <span className="bg-neutral-900 text-white text-[10px] px-2 py-0.5 rounded-md flex items-center gap-1 font-sans">
               <FileText className="w-3 h-3 text-emerald-400" />
-              <span>Active File: <strong>proxy-{logStatus.activeFile}.log</strong> ({formatSize(logStatus.activeFile === 1 ? logStatus.file1Size : logStatus.file2Size)} / {logStatus.maxLogSizeMB}MB dual-file round-robin)</span>
+              <span>system_logs.db: <strong>{formatSize(logStatus.totalSize)}</strong> / {logStatus.maxLogSizeMB} MB cap</span>
             </span>
           )}
         </div>
@@ -232,11 +224,7 @@ export default function TerminalLogs({ logs, onClear, onRefresh, isPolling, setI
           filteredLogs.map((log, index) => (
             <div
               key={log.id ?? index}
-              className={`px-3 py-2 rounded-lg transition-colors ${
-                log.file && logStatus && log.file === logStatus.activeFile
-                  ? "bg-neutral-900/90 border-l-2 border-emerald-500"
-                  : "hover:bg-neutral-900/50 opacity-85"
-              }`}
+              className="px-3 py-2 rounded-lg transition-colors hover:bg-neutral-900/50 opacity-85"
             >
               <div className="flex items-center gap-x-2 flex-wrap">
                 <span className="text-neutral-500 select-none font-mono text-[10px]">
@@ -246,11 +234,6 @@ export default function TerminalLogs({ logs, onClear, onRefresh, isPolling, setI
                 <span className={`${getLevelColor(log.level)} uppercase select-none font-bold text-[10px]`}>
                   [{log.level}]
                 </span>
-                {log.file && (
-                  <span className="text-neutral-500 text-[9px] font-mono select-none" title={`From dual round-robin storage: proxy-${log.file}.log`}>
-                    [F{log.file}]
-                  </span>
-                )}
               </div>
               <div className="mt-1 text-neutral-200 break-all font-mono whitespace-pre-wrap leading-relaxed">
                 {getLevelIcon(log.level)}

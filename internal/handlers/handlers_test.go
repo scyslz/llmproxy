@@ -134,8 +134,8 @@ func TestHandleLogsStatus(t *testing.T) {
 	if out["maxLogSizeMB"].(float64) != 2 {
 		t.Fatalf("maxLogSizeMB = %v, want 2", out["maxLogSizeMB"])
 	}
-	if out["file1Size"].(float64) <= 0 {
-		t.Fatalf("file1Size should be > 0")
+	if out["totalSize"].(float64) <= 0 {
+		t.Fatalf("totalSize should be > 0")
 	}
 }
 

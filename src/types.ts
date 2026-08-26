@@ -53,15 +53,12 @@ export interface SystemLog {
   timestamp: string;
   level: "info" | "warn" | "error";
   category?: "system" | "proxy";
-  file?: number;
   message: string;
   requestId?: string;
 }
 
 export interface LogStatus {
-  activeFile: number;
-  file1Size: number;
-  file2Size: number;
+  totalSize: number;
   maxLogSizeMB: number;
   totalLogs: number;
 }
