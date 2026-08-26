@@ -115,6 +115,25 @@ func TestHandleProxyDegradeLogs(t *testing.T) {
 	if success.Status != 200 {
 		t.Fatalf("success log status = %d, want 200", success.Status)
 	}
+	if degrade.RequestID == "" {
+		t.Fatal("degrade log has empty request ID")
+	}
+	if degrade.RequestID != success.RequestID {
+		t.Fatalf("request IDs differ across retry chain: degrade=%q success=%q", degrade.RequestID, success.RequestID)
+	}
+
+	sysLogs, _, err := sysStore.Query("", "", degrade.RequestID, 0, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sysLogs) == 0 {
+		t.Fatalf("no system logs found for request ID %q", degrade.RequestID)
+	}
+	for _, sl := range sysLogs {
+		if sl.RequestID == nil || *sl.RequestID != degrade.RequestID {
+			t.Fatalf("system log %d carries wrong request ID: %+v", sl.ID, sl.RequestID)
+		}
+	}
 	_ = ctx
 }
 

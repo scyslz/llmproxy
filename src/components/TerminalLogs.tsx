@@ -10,9 +10,10 @@ interface TerminalLogsProps {
   setIsPolling: (polling: boolean) => void;
   viewRequestId?: string;
   onClearView?: () => void;
+  onViewRequest?: (id: string) => void;
 }
 
-export default function TerminalLogs({ logs, onClear, onRefresh, isPolling, setIsPolling, viewRequestId, onClearView }: TerminalLogsProps) {
+export default function TerminalLogs({ logs, onClear, onRefresh, isPolling, setIsPolling, viewRequestId, onClearView, onViewRequest }: TerminalLogsProps) {
   const [levelFilter, setLevelFilter] = useState<"all" | "info" | "warn" | "error">("all");
   const [categoryFilter, setCategoryFilter] = useState<"all" | "proxy" | "system">("all");
   const [logStatus, setLogStatus] = useState<LogStatus | null>(null);
@@ -234,6 +235,15 @@ export default function TerminalLogs({ logs, onClear, onRefresh, isPolling, setI
                 <span className={`${getLevelColor(log.level)} uppercase select-none font-bold text-[10px]`}>
                   [{log.level}]
                 </span>
+                {log.requestId && (
+                  <button
+                    onClick={() => onViewRequest?.(log.requestId!)}
+                    title={`Request ID: ${log.requestId} — retries and provider fallbacks share this ID. Click to view all its logs.`}
+                    className="text-[9px] font-mono text-neutral-500 hover:text-blue-600 hover:bg-blue-50 px-1 py-0.5 rounded border border-transparent hover:border-blue-200 transition-colors cursor-pointer select-none"
+                  >
+                    #{log.requestId.slice(0, 8)}
+                  </button>
+                )}
               </div>
               <div className="mt-1 text-neutral-200 break-all font-mono whitespace-pre-wrap leading-relaxed">
                 {getLevelIcon(log.level)}

@@ -497,6 +497,7 @@ export default function App() {
                 setIsPolling={setIsPollingLogs}
                 viewRequestId={viewRequestId || undefined}
                 onClearView={() => setViewRequestId(null)}
+                onViewRequest={(rid) => setViewRequestId(rid)}
               />
             </motion.div>
           )}
