@@ -318,6 +318,15 @@ func (s *SystemStore) Count() (int64, error) {
 	return c, err
 }
 
+// CountByFile returns the number of logs per file bucket (1 and 2).
+func (s *SystemStore) CountByFile() (file1, file2 int64, err error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	row := s.db.QueryRow("SELECT COALESCE(SUM(CASE WHEN file = 1 OR file IS NULL THEN 1 ELSE 0 END), 0), COALESCE(SUM(CASE WHEN file = 2 THEN 1 ELSE 0 END), 0) FROM system_logs")
+	err = row.Scan(&file1, &file2)
+	return
+}
+
 // Close closes the underlying database.
 func (s *SystemStore) Close() error { return s.db.Close() }
 

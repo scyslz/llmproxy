@@ -393,10 +393,18 @@ func (m *Manager) HandleListLogs(w http.ResponseWriter, r *http.Request) {
 
 func (m *Manager) HandleLogsStatus(w http.ResponseWriter, _ *http.Request) {
 	count, _ := m.SysStore.Count()
+	totalSize := m.SysStore.Size()
+	f1, f2, _ := m.SysStore.CountByFile()
+	totalRows := f1 + f2
+	var file1Size, file2Size int64
+	if totalRows > 0 {
+		file1Size = totalSize * f1 / totalRows
+		file2Size = totalSize * f2 / totalRows
+	}
 	writeJSON(w, 200, map[string]interface{}{
-		"activeFile":  m.Cfg.Get().ActiveLogFile,
-		"file1Size":   m.SysStore.Size(), // 单库文件大小
-		"file2Size":   0,
+		"activeFile":   m.Cfg.Get().ActiveLogFile,
+		"file1Size":    file1Size,
+		"file2Size":    file2Size,
 		"maxLogSizeMB": m.Cfg.Get().MaxLogSizeMB,
 		"totalLogs":    count,
 	})
