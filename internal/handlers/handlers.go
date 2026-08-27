@@ -559,6 +559,25 @@ func applyPatch(p *domain.Provider, body map[string]interface{}) {
 			p.Models = models
 		}
 	}
+	if v, ok := body["protocol"].(string); ok {
+		switch v {
+		case "", "chat", "responses":
+			p.Protocol = v
+			// 协议变更后清空按模型的探测结果，等待重新探测
+			p.ModelProtocols = nil
+		}
+	}
+	if v, ok := body["modelProtocols"]; ok {
+		if mp, ok := v.(map[string]interface{}); ok {
+			out := make(map[string]string, len(mp))
+			for k, val := range mp {
+				if s, ok := val.(string); ok {
+					out[k] = s
+				}
+			}
+			p.ModelProtocols = out
+		}
+	}
 }
 
 func writeJSON(w http.ResponseWriter, code int, v interface{}) {

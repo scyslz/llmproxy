@@ -54,7 +54,8 @@ export default function ProviderCard({
     modelsString: "",
     concurrency: 0,
     openaiEndpoint: "",
-    defaultModel: ""
+    defaultModel: "",
+    protocol: ""
   });
   const [showApiKeyId, setShowApiKeyId] = useState<string | null>(null);
   const [showApiKeyForm, setShowApiKeyForm] = useState(false);
@@ -85,7 +86,8 @@ export default function ProviderCard({
       modelsString: preset.models.join(", "),
       concurrency: 0,
       openaiEndpoint: "",
-      defaultModel: ""
+      defaultModel: "",
+      protocol: ""
     });
   };
 
@@ -99,7 +101,8 @@ export default function ProviderCard({
       modelsString: p.models.join(", "),
       concurrency: p.concurrency || 0,
       openaiEndpoint: p.openaiEndpoint || "",
-      defaultModel: p.defaultModel || ""
+      defaultModel: p.defaultModel || "",
+      protocol: p.protocol || ""
     });
     setIsEditing(p.id);
   };
@@ -114,7 +117,8 @@ export default function ProviderCard({
       modelsString: "",
       concurrency: 0,
       openaiEndpoint: "",
-      defaultModel: ""
+      defaultModel: "",
+      protocol: ""
     });
     setIsEditing("new");
   };
@@ -233,7 +237,8 @@ export default function ProviderCard({
       models,
       concurrency: formData.concurrency || 0,
       openaiEndpoint: formData.openaiEndpoint.trim() || undefined,
-      defaultModel
+      defaultModel,
+      protocol: formData.protocol || undefined
     };
 
     if (isEditing === "new") {
@@ -502,6 +507,20 @@ export default function ProviderCard({
                 </select>
                 <p className="text-[10px] text-neutral-500">Used when a request model is not in the Supported Models list. Leave empty to keep the current first-model behavior.</p>
               </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-neutral-700">Protocol</label>
+                <select
+                  value={formData.protocol}
+                  onChange={(e) => setFormData({ ...formData, protocol: e.target.value })}
+                  className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2 text-sm text-neutral-800 outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 cursor-pointer shadow-2xs"
+                >
+                  <option value="">Auto (probe on 404)</option>
+                  <option value="chat">Chat Completions (/v1/chat/completions)</option>
+                  <option value="responses">Responses (/v1/responses)</option>
+                </select>
+                <p className="text-[10px] text-neutral-500">Declare the provider's conversation protocol. Leave empty to auto-detect per model via a one-time 404 probe.</p>
+              </div>
             </div>
 
             {/* Modal Footer */}
@@ -593,6 +612,9 @@ export default function ProviderCard({
                   <div className="flex items-center text-neutral-500 font-mono break-all bg-neutral-50 rounded-lg p-1.5 border border-neutral-150">
                     <Globe className="w-3.5 h-3.5 mr-1 text-neutral-400 shrink-0" />
                     <span className="text-[10px] select-all truncate" title={p.baseUrl}>{p.baseUrl}</span>
+                    <span className="ml-1 shrink-0 px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase bg-neutral-200 text-neutral-600">
+                      {p.protocol || "auto"}
+                    </span>
                   </div>
 
                   <div className="flex items-center justify-between text-neutral-500 text-[11px]">

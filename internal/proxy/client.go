@@ -20,6 +20,8 @@ type Provider struct {
 	Models         []string
 	OpenAIEndpoint string
 	DefaultModel   string
+	Protocol       string
+	ModelProtocols map[string]string
 	Timeout        time.Duration
 	Concurrency    int
 }

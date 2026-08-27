@@ -8,6 +8,10 @@ export interface Provider {
   concurrency?: number;
   openaiEndpoint?: string;
   defaultModel?: string;
+  // protocol 声明该 provider 接受的对话协议；空字符串表示由代理自动探测。
+  protocol?: "chat" | "responses";
+  // modelProtocols 按 (model) 覆盖 protocol，由 404 探测成功后自动写入。
+  modelProtocols?: Record<string, string>;
 }
 
 export interface VirtualKey {

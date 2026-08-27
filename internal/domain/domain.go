@@ -12,6 +12,11 @@ type Provider struct {
 	Timeout        int      `json:"timeout,omitempty"`     // upstream request timeout in ms, 0 or unset = none
 	OpenAIEndpoint string   `json:"openaiEndpoint,omitempty"`
 	DefaultModel   string   `json:"defaultModel,omitempty"`
+	// Protocol 声明该 provider 接受的对话协议：chat（/v1/chat/completions）或
+	// responses（/v1/responses）。空字符串表示未知，由代理在运行时按 404 探测。
+	Protocol string `json:"protocol,omitempty"`
+	// ModelProtocols 按 (model) 覆盖 Protocol，由 404 探测成功后自动写入。
+	ModelProtocols map[string]string `json:"modelProtocols,omitempty"`
 }
 
 // VirtualKey maps a client-facing key to a set of authorized providers.

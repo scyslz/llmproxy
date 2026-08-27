@@ -81,6 +81,8 @@ func ProviderFromDomain(p *domain.Provider) *Provider {
 		Models:    p.Models,
 		OpenAIEndpoint: p.OpenAIEndpoint,
 		DefaultModel:   p.DefaultModel,
+		Protocol:       p.Protocol,
+		ModelProtocols: p.ModelProtocols,
 		Timeout:   time.Duration(p.Timeout) * time.Millisecond,
 		Concurrency: p.Concurrency,
 	}
@@ -264,23 +266,42 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 		}
 		h.reqModel = candModel
 
-		targetURL := ResolveTargetURL(p.BaseURL, p.OpenAIEndpoint, h.origPath)
-		sub := h.origPath
-		if idx := strings.Index(h.origPath, "/v1"); idx >= 0 {
-			sub = h.origPath[idx+3:]
+		inbound := inboundProtocol(h.origPath)
+		target, known := p.upstreamProtocol(candModel)
+		probe := false
+		if !known {
+			target = inbound // 协议未知，先按入站原生协议尝试，404 再探测
+			probe = true
 		}
-		if !strings.HasPrefix(sub, "/") {
-			sub = "/" + sub
+
+		attemptBody := candBody
+		if inbound != target {
+			convBody, cerr := convertRequestBody(inbound, target, candBody)
+			if cerr != nil {
+				h.proxyLog(a, logging.LevelError, "[API Proxy] request conversion failed: "+cerr.Error())
+				h.degradedFrom = append(h.degradedFrom, p.Name+" (conversion error)")
+				h.lastStatus = 400
+				h.lastProvider = p.Name
+				h.failureLogged = true
+				a.logRequest(h, p.Name, candModel, 400, 0, 0, 0, 0, false, cerr.Error())
+				h.proxyLog(a, logging.LevelWarn, "[API Proxy Degrade] "+p.Name+" failed: conversion error, trying next provider")
+				continue
+			}
+			attemptBody = convBody
 		}
+
+		targetURL := buildTargetURL(p, target)
+		sub := targetSubPath(target)
 		pathRewritten := p.OpenAIEndpoint != "" && p.OpenAIEndpoint != sub
 		h.proxyLog(a, logging.LevelInfo, "[API Proxy Forward] "+h.method+" "+h.origPath+" -> "+p.Name+
 			" ("+orDefault(candModel, "default")+")"+
 			ifAny(h.keyName != "", " [Key: "+h.keyName+"]", "")+
+			ifAny(inbound != target, " [convert "+inbound+"->"+target+"]", "")+
 			ifAny(pathRewritten, " => "+p.OpenAIEndpoint, ""))
 		if h.logDetail == "all" {
 			h.proxyLog(a, logging.LevelInfo, "[API Proxy Request URL] "+h.method+" "+targetURL)
-			if h.logBody && (h.method == "POST" || h.method == "PUT") && candBody != nil {
-				if b, err := json.Marshal(candBody); err == nil {
+			if h.logBody && (h.method == "POST" || h.method == "PUT") && attemptBody != nil {
+				if b, err := json.Marshal(attemptBody); err == nil {
 					h.proxyLog(a, logging.LevelInfo, "[API Proxy Request Body] "+string(b))
 				}
 			}
@@ -289,7 +310,7 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 		// 并发控制（覆盖整个转发+回传周期）
 		sem := a.Sem(p.ID, p.Concurrency)
 
-		res, cancelFn, aborted, reason, status, timeoutErr := a.forwardOnce(h, p, candBody, targetURL, r.Context(), sem)
+		res, cancelFn, aborted, reason, status, timeoutErr := a.forwardOnce(h, p, attemptBody, targetURL, r.Context(), sem)
 		if aborted {
 			h.proxyLog(a, logging.LevelWarn, "[API Proxy Aborted] Client closed connection ("+spanMs(h.start)+")")
 			a.logRequest(h, p.Name, h.reqModel, 499, 0, 0, 0, 0, false, "client closed connection")
@@ -300,10 +321,56 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 			if fromGroup {
 				a.Health.RecordSuccess(p.ID, candModel)
 			}
-			a.streamResponse(w, r, h, p, res, isStream(res))
+			if inbound != target {
+				a.transpileResponse(w, r, h, p, res, inbound, target, candModel)
+			} else {
+				a.streamResponse(w, r, h, p, res, isStream(res))
+			}
 			cancelFn()
 			return
 		}
+
+		// 404 探测：协议未知时翻转到另一协议重试一次
+		if status == 404 && probe {
+			flipped := protoChat
+			if target == protoChat {
+				flipped = protoResponses
+			}
+			convBody, cerr := convertRequestBody(inbound, flipped, candBody)
+			if cerr == nil {
+				probeURL := buildTargetURL(p, flipped)
+				res2, cancel2, ab2, rs2, st2, te2 := a.forwardOnce(h, p, convBody, probeURL, r.Context(), sem)
+				if ab2 {
+					h.proxyLog(a, logging.LevelWarn, "[API Proxy Aborted] Client closed connection ("+spanMs(h.start)+")")
+					a.logRequest(h, p.Name, h.reqModel, 499, 0, 0, 0, 0, false, "client closed connection")
+					return
+				}
+				if res2 != nil {
+					a.Breaker.RecordSuccess(p.ID)
+					if fromGroup {
+						a.Health.RecordSuccess(p.ID, candModel)
+					}
+					a.persistDiscoveredProtocol(p.ID, candModel, flipped)
+					h.proxyLog(a, logging.LevelInfo, "[API Proxy] 404 probe succeeded by flipping to '"+flipped+"' for "+p.Name+"/"+candModel)
+					if inbound != flipped {
+						a.transpileResponse(w, r, h, p, res2, inbound, flipped, candModel)
+					} else {
+						a.streamResponse(w, r, h, p, res2, isStream(res2))
+					}
+					cancel2()
+					return
+				}
+				// 翻转后仍失败：记录该次失败并继续候选链
+				a.Breaker.RecordFailure(p.ID)
+				if fromGroup {
+					a.Health.RecordFailure(p.ID, candModel)
+				}
+				status = st2
+				timeoutErr = te2
+				reason = rs2
+			}
+		}
+
 		a.Breaker.RecordFailure(p.ID)
 		if fromGroup {
 			a.Health.RecordFailure(p.ID, h.reqModel)

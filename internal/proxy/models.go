@@ -142,7 +142,25 @@ func (a *App) HandleDirectChat(w http.ResponseWriter, r *http.Request, providerI
 		a.Logger.Log(logging.LevelInfo, "[Provider Test Request Headers] "+formatHeaders(hdr), "proxy", reqID)
 	}
 
-	resp, err := a.Client.Do(r.Context(), "POST", targetURL, hdr, bytes.NewReader(rawBody), p.Timeout)
+	// 若 provider 声明为 responses 协议，Playground 仍以 chat/completions 形态发送，
+	// 此处将请求转换为 responses 并指向 /v1/responses，响应再转回 chat。
+	needsConvert := false
+	sendURL := targetURL
+	sendBody := rawBody
+	if target, known := p.upstreamProtocol(model); known && target == protoResponses {
+		needsConvert = true
+		var m map[string]interface{}
+		if json.Unmarshal(rawBody, &m) == nil {
+			if conv, cerr := convertRequestBody(protoChat, protoResponses, m); cerr == nil {
+				if b, e := json.Marshal(conv); e == nil {
+					sendBody = b
+				}
+			}
+		}
+		sendURL = buildTargetURL(p, protoResponses)
+	}
+
+	resp, err := a.Client.Do(r.Context(), "POST", sendURL, hdr, bytes.NewReader(sendBody), p.Timeout)
 	if err != nil {
 		directLog("error", "[Provider Test] "+p.Name+" failed: "+err.Error())
 		a.logRequest(h, p.Name, model, 502, 0, 0, 0, 0, false, "connection error: "+err.Error())
@@ -150,6 +168,11 @@ func (a *App) HandleDirectChat(w http.ResponseWriter, r *http.Request, providerI
 		return
 	}
 	defer resp.Body.Close()
+
+	if needsConvert {
+		a.transpileResponse(w, r, h, p, resp, protoChat, protoResponses, model)
+		return
+	}
 
 	if h.detailActiveFor(resp.StatusCode) {
 		if logDetail == "error" {
