@@ -45,7 +45,15 @@ type Provider struct {
 - `ProviderFromDomain`（internal/proxy/app.go:75）同步透传 `Protocol`、`ModelProtocols`。
 - config 校验（internal/config/config.go validate）：`protocol` ∈ {"", "chat", "responses"}，`modelProtocols` 值同集合；非法时启动报错。
 
-### 2. 新包 `internal/convert` — 协议转换器（纯函数，独立可测）
+### 2. 新包 `internal/convert` — 协议转换器
+
+**实现策略（2026-08-27 决策）**：转换核心从 QuantumNous/new-api（46.5k stars）外科手术式移植，保留原文件 AGPL-3.0 版权声明；本项目分发（公开 Docker 镜像）时整体遵循 AGPL-3.0。移植范围：
+
+- `relaykit/relayconvert/internal/oai_chat/to_oai_responses_{req,resp,stream_resp}.go`
+- `relaykit/relayconvert/internal/oai_responses/to_oai_chat_{req,resp,stream_resp}.go`
+- 所需 `relaykit/dto` 类型子集（chat/responses 的请求、响应、流式结构 + Usage）
+- 去 gin 化（核心函数本就无 gin 依赖）、内联 `samber/lo` 调用
+- 其 golden 测试用例一并移植为行为基准
 
 ```go
 // 请求体转换（map 入参，返回新 map；不改原对象）
