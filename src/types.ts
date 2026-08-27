@@ -6,7 +6,8 @@ export interface Provider {
   enabled: boolean;
   models: string[];
   concurrency?: number;
-  openaiEndpoint?: string;
+  chatPath?: string;
+  responsesPath?: string;
   defaultModel?: string;
   // protocol 声明该 provider 接受的对话协议；空字符串表示由代理自动探测。
   protocol?: "chat" | "responses";

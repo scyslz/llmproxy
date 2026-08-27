@@ -10,7 +10,8 @@ type Provider struct {
 	Models         []string `json:"models,omitempty"`
 	Concurrency    int      `json:"concurrency,omitempty"` // 0 or unset = unlimited
 	Timeout        int      `json:"timeout,omitempty"`     // upstream request timeout in ms, 0 or unset = none
-	OpenAIEndpoint string   `json:"openaiEndpoint,omitempty"`
+	ChatEndpoint      string `json:"chatEndpoint,omitempty"`
+	ResponsesEndpoint string `json:"responsesEndpoint,omitempty"`
 	DefaultModel   string   `json:"defaultModel,omitempty"`
 	// Protocol 声明该 provider 接受的对话协议：chat（/v1/chat/completions）或
 	// responses（/v1/responses）。空字符串表示未知，由代理在运行时按 404 探测。

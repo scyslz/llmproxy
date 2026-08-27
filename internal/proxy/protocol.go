@@ -49,7 +49,12 @@ func targetSubPath(proto string) string {
 // buildTargetURL 根据协议构造上游 URL（等价于 ResolveTargetURL 但使用目标协议子路径）。
 func buildTargetURL(p *Provider, proto string) string {
 	base := strings.TrimRight(p.BaseURL, "/")
-	configured := strings.TrimSpace(p.OpenAIEndpoint)
+	var configured string
+	if proto == protoResponses {
+		configured = strings.TrimSpace(p.ResponsesEndpoint)
+	} else {
+		configured = strings.TrimSpace(p.ChatEndpoint)
+	}
 	if configured != "" {
 		if !strings.HasPrefix(configured, "/") {
 			configured = "/" + configured

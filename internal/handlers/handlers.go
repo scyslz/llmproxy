@@ -544,8 +544,11 @@ func applyPatch(p *domain.Provider, body map[string]interface{}) {
 	if v, ok := body["timeout"].(float64); ok {
 		p.Timeout = int(v)
 	}
-	if v, ok := body["openaiEndpoint"].(string); ok {
-		p.OpenAIEndpoint = v
+	if v, ok := body["chatEndpoint"].(string); ok {
+		p.ChatEndpoint = v
+	}
+	if v, ok := body["responsesEndpoint"].(string); ok {
+		p.ResponsesEndpoint = v
 	}
 	if v, ok := body["defaultModel"].(string); ok {
 		p.DefaultModel = v
@@ -823,7 +826,7 @@ func (m *Manager) HandleGroupTest(w http.ResponseWriter, r *http.Request, id str
 				"messages":   []map[string]string{{"role": "user", "content": "hi"}},
 				"max_tokens": 1,
 			})
-			targetURL := proxy.ResolveTargetURL(p.BaseURL, p.OpenAIEndpoint, "/v1/chat/completions")
+			targetURL := proxy.ResolveTargetURL(p.BaseURL, p.ChatEndpoint, "/v1/chat/completions")
 			resp, err := m.ProxyApp.Client.Do(r.Context(), "POST", targetURL,
 				http.Header{"Content-Type": {"application/json"}, "Authorization": {"Bearer " + p.APIKey}},
 				strings.NewReader(string(bodyBytes)),

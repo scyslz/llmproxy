@@ -141,7 +141,9 @@ type rawProvider struct {
 	Models         []string `json:"models"`
 	Concurrency    *int     `json:"concurrency"`
 	Timeout        *int     `json:"timeout"`
-	OpenAIEndpoint string   `json:"openaiEndpoint"`
+	OpenAIEndpoint    string `json:"openaiEndpoint"` // legacy alias, migrated to ChatEndpoint
+	ChatEndpoint      string `json:"chatEndpoint"`
+	ResponsesEndpoint string `json:"responsesEndpoint"`
 	DefaultModel   string   `json:"defaultModel"`
 	// Legacy/alternate field names kept for compatibility.
 	BaseUrl2 string `json:"base_url"`
@@ -236,7 +238,8 @@ func (rp rawProvider) toProvider() domain.Provider {
 		BaseURL:        orString(rp.BaseURL, rp.BaseUrl2),
 		APIKey:         orString(rp.APIKey, rp.APIKey2),
 		Models:         rp.Models,
-		OpenAIEndpoint: orString(rp.OpenAIEndpoint, rp.OpenA2),
+		ChatEndpoint:      orString(rp.ChatEndpoint, orString(rp.OpenAIEndpoint, rp.OpenA2)),
+		ResponsesEndpoint: rp.ResponsesEndpoint,
 		DefaultModel:   orString(rp.DefaultModel, rp.Default2),
 	}
 	if rp.Enabled != nil {

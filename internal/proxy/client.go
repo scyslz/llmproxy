@@ -18,7 +18,8 @@ type Provider struct {
 	BaseURL        string
 	APIKey         string
 	Models         []string
-	OpenAIEndpoint string
+	ChatEndpoint      string
+	ResponsesEndpoint string
 	DefaultModel   string
 	Protocol       string
 	ModelProtocols map[string]string
@@ -126,9 +127,9 @@ func (p *UsageParser) Push(text string) {
 // ResolveTargetURL 构建上游目标 URL，行为对齐 Node 版本：
 //   - 配置了 openaiEndpoint 时直接使用（拼在 baseUrl 后）
 //   - 否则在 baseUrl 后附加 /v1 + 去掉 /v1 前缀的请求子路径
-func ResolveTargetURL(baseURL, openaiEndpoint, requestPath string) string {
+func ResolveTargetURL(baseURL, chatEndpoint, requestPath string) string {
 	base := strings.TrimRight(baseURL, "/")
-	configured := strings.TrimSpace(openaiEndpoint)
+	configured := strings.TrimSpace(chatEndpoint)
 	if configured != "" {
 		if !strings.HasPrefix(configured, "/") {
 			configured = "/" + configured

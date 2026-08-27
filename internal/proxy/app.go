@@ -79,7 +79,8 @@ func ProviderFromDomain(p *domain.Provider) *Provider {
 		BaseURL:   p.BaseURL,
 		APIKey:    p.APIKey,
 		Models:    p.Models,
-		OpenAIEndpoint: p.OpenAIEndpoint,
+		ChatEndpoint:      p.ChatEndpoint,
+		ResponsesEndpoint: p.ResponsesEndpoint,
 		DefaultModel:   p.DefaultModel,
 		Protocol:       p.Protocol,
 		ModelProtocols: p.ModelProtocols,
@@ -292,12 +293,16 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 
 		targetURL := buildTargetURL(p, target)
 		sub := targetSubPath(target)
-		pathRewritten := p.OpenAIEndpoint != "" && p.OpenAIEndpoint != sub
+		cfgPath := p.ChatEndpoint
+		if target == protoResponses {
+			cfgPath = p.ResponsesEndpoint
+		}
+		pathRewritten := cfgPath != "" && cfgPath != sub
 		h.proxyLog(a, logging.LevelInfo, "[API Proxy Forward] "+h.method+" "+h.origPath+" -> "+p.Name+
 			" ("+orDefault(candModel, "default")+")"+
 			ifAny(h.keyName != "", " [Key: "+h.keyName+"]", "")+
 			ifAny(inbound != target, " [convert "+inbound+"->"+target+"]", "")+
-			ifAny(pathRewritten, " => "+p.OpenAIEndpoint, ""))
+			ifAny(pathRewritten, " => "+cfgPath, ""))
 		if h.logDetail == "all" {
 			h.proxyLog(a, logging.LevelInfo, "[API Proxy Request URL] "+h.method+" "+targetURL)
 			if h.logBody && (h.method == "POST" || h.method == "PUT") && attemptBody != nil {

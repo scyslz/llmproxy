@@ -52,10 +52,11 @@ export default function ProviderCard({
     baseUrl: "",
     apiKey: "",
     modelsString: "",
-    concurrency: 0,
-    openaiEndpoint: "",
-    defaultModel: "",
-    protocol: ""
+      concurrency: 0,
+      chatPath: "",
+      responsesPath: "",
+      defaultModel: "",
+      protocol: ""
   });
   const [showApiKeyId, setShowApiKeyId] = useState<string | null>(null);
   const [showApiKeyForm, setShowApiKeyForm] = useState(false);
@@ -83,11 +84,12 @@ export default function ProviderCard({
       name: preset.name,
       baseUrl: preset.baseUrl,
       apiKey: "",
-      modelsString: preset.models.join(", "),
-      concurrency: 0,
-      openaiEndpoint: "",
-      defaultModel: "",
-      protocol: ""
+        modelsString: preset.models.join(", "),
+        concurrency: 0,
+        chatPath: "",
+        responsesPath: "",
+        defaultModel: "",
+        protocol: ""
     });
   };
 
@@ -100,7 +102,8 @@ export default function ProviderCard({
       apiKey: p.apiKey,
       modelsString: p.models.join(", "),
       concurrency: p.concurrency || 0,
-      openaiEndpoint: p.openaiEndpoint || "",
+        chatPath: p.chatPath || "",
+        responsesPath: p.responsesPath || "",
       defaultModel: p.defaultModel || "",
       protocol: p.protocol || ""
     });
@@ -114,11 +117,12 @@ export default function ProviderCard({
       name: "",
       baseUrl: "",
       apiKey: "",
-      modelsString: "",
-      concurrency: 0,
-      openaiEndpoint: "",
-      defaultModel: "",
-      protocol: ""
+        modelsString: "",
+        concurrency: 0,
+        chatPath: "",
+        responsesPath: "",
+        defaultModel: "",
+        protocol: ""
     });
     setIsEditing("new");
   };
@@ -236,7 +240,8 @@ export default function ProviderCard({
       apiKey: formData.apiKey.trim(),
       models,
       concurrency: formData.concurrency || 0,
-      openaiEndpoint: formData.openaiEndpoint.trim() || undefined,
+      chatPath: formData.chatPath.trim() || undefined,
+      responsesPath: formData.responsesPath.trim() || undefined,
       defaultModel,
       protocol: formData.protocol || undefined
     };
@@ -320,6 +325,20 @@ export default function ProviderCard({
             </div>
 
             <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-neutral-700">Protocol</label>
+              <select
+                value={formData.protocol}
+                onChange={(e) => setFormData({ ...formData, protocol: e.target.value })}
+                className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2 text-sm text-neutral-800 outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 cursor-pointer shadow-2xs"
+              >
+                <option value="">Auto (probe on 404)</option>
+                <option value="chat">Chat Completions (/v1/chat/completions)</option>
+                <option value="responses">Responses (/v1/responses)</option>
+              </select>
+              <p className="text-[10px] text-neutral-500">Declare the provider's conversation protocol. Leave empty to auto-detect per model via a one-time 404 probe.</p>
+            </div>
+
+            <div className="space-y-1.5">
               <label className="text-xs font-semibold text-neutral-700">Base URL (OpenAI-Compatible endpoint)</label>
               <input
                 type="url"
@@ -331,17 +350,32 @@ export default function ProviderCard({
               />
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-neutral-700">Chat Path (optional)</label>
-              <input
-                type="text"
-                placeholder="/chat/completions"
-                value={formData.openaiEndpoint}
-                onChange={(e) => setFormData({ ...formData, openaiEndpoint: e.target.value })}
-                className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2 text-sm text-neutral-800 outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 font-mono shadow-2xs"
-              />
-              <p className="text-[10px] text-neutral-500">Optional. When set, the LLM router forwards to this path (e.g. /chat/completions); otherwise /v1/chat/completions is used.</p>
-            </div>
+            {formData.protocol !== "responses" && (
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-neutral-700">Chat Path (optional)</label>
+                <input
+                  type="text"
+                  placeholder="/chat/completions"
+                  value={formData.chatPath}
+                  onChange={(e) => setFormData({ ...formData, chatPath: e.target.value })}
+                  className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2 text-sm text-neutral-800 outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 font-mono shadow-2xs"
+                />
+                <p className="text-[10px] text-neutral-500">Optional. Overrides the chat completions path (e.g. /chat/completions); otherwise /v1/chat/completions is used.</p>
+              </div>
+            )}
+            {formData.protocol !== "chat" && (
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-neutral-700">Responses Path (optional)</label>
+                <input
+                  type="text"
+                  placeholder="/responses"
+                  value={formData.responsesPath}
+                  onChange={(e) => setFormData({ ...formData, responsesPath: e.target.value })}
+                  className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2 text-sm text-neutral-800 outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 font-mono shadow-2xs"
+                />
+                <p className="text-[10px] text-neutral-500">Optional. Overrides the responses path (e.g. /responses); otherwise /v1/responses is used.</p>
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-neutral-700">API Key / Token (Saved Server-Side)</label>
@@ -508,19 +542,6 @@ export default function ProviderCard({
                 <p className="text-[10px] text-neutral-500">Used when a request model is not in the Supported Models list. Leave empty to keep the current first-model behavior.</p>
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-neutral-700">Protocol</label>
-                <select
-                  value={formData.protocol}
-                  onChange={(e) => setFormData({ ...formData, protocol: e.target.value })}
-                  className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2 text-sm text-neutral-800 outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 cursor-pointer shadow-2xs"
-                >
-                  <option value="">Auto (probe on 404)</option>
-                  <option value="chat">Chat Completions (/v1/chat/completions)</option>
-                  <option value="responses">Responses (/v1/responses)</option>
-                </select>
-                <p className="text-[10px] text-neutral-500">Declare the provider's conversation protocol. Leave empty to auto-detect per model via a one-time 404 probe.</p>
-              </div>
             </div>
 
             {/* Modal Footer */}

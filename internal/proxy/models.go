@@ -97,8 +97,8 @@ func (a *App) HandleDirectChat(w http.ResponseWriter, r *http.Request, providerI
 
 	base := strings.TrimRight(p.BaseURL, "/")
 	targetURL := ""
-	if p.OpenAIEndpoint != "" {
-		ep := p.OpenAIEndpoint
+	if p.ChatEndpoint != "" {
+		ep := p.ChatEndpoint
 		if !strings.HasPrefix(ep, "/") {
 			ep = "/" + ep
 		}
