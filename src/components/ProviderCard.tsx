@@ -100,7 +100,7 @@ export default function ProviderCard({
       name: p.name,
       baseUrl: p.baseUrl,
       apiKey: p.apiKey,
-      modelsString: p.models.join(", "),
+      modelsString: (p.models || []).join(", "),
       concurrency: p.concurrency || 0,
         chatPath: p.chatPath || "",
         responsesPath: p.responsesPath || "",
@@ -593,7 +593,7 @@ export default function ProviderCard({
           const isActive = p.enabled;
           const hasKey = p.apiKey && p.apiKey.length > 0;
           const cardKeyword = cardSearchKeywords[p.id] || "";
-          const cardFilteredModels = p.models.filter(m =>
+          const cardFilteredModels = (p.models || []).filter(m =>
             m.toLowerCase().includes(cardKeyword.toLowerCase())
           );
           if (p.defaultModel && cardFilteredModels.includes(p.defaultModel)) {
@@ -674,7 +674,7 @@ export default function ProviderCard({
                   {/* Models Section with API Sync and Keyword Search */}
                   <div className="pt-1 border-t border-neutral-100">
                     <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-neutral-600 font-semibold text-[11px]">Models ({p.models.length}):</span>
+                      <span className="text-neutral-600 font-semibold text-[11px]">Models ({(p.models || []).length}):</span>
                       <button
                         onClick={() => handleQuickSyncCard(p)}
                         disabled={syncingCardId === p.id}
@@ -686,7 +686,7 @@ export default function ProviderCard({
                       </button>
                     </div>
 
-                    {p.models.length > 5 && (
+                    {(p.models || []).length > 5 && (
                       <div className="relative mb-1.5">
                         <Search className="w-3 h-3 text-neutral-400 absolute left-2 top-1/2 -translate-y-1/2" />
                         <input
@@ -712,7 +712,7 @@ export default function ProviderCard({
                         <span className="text-[10px] text-neutral-400 italic py-1">No models match "{cardKeyword}"</span>
                       ) : (
                         cardFilteredModels.map((model) => {
-                          const isDefault = (p.defaultModel || p.models[0]) === model;
+                          const isDefault = (p.defaultModel || (p.models || [])[0]) === model;
                           return (
                             <span
                               key={model}

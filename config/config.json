@@ -19,7 +19,7 @@
         "mock-model",
         "1234"
       ],
-      "openaiEndpoint": "/chat/completions",
+      "chatEndpoint": "/chat/completions",
       "defaultModel": "1234"
     },
     {
@@ -31,8 +31,15 @@
       "models": [
         "1234"
       ],
-      "openaiEndpoint": "/chat/completions",
+      "chatEndpoint": "/chat/completions",
       "defaultModel": "1234"
+    },
+    {
+      "id": "opencodezen",
+      "name": "gg",
+      "baseUrl": "https://opencode.ai/zen/",
+      "apiKey": "public",
+      "enabled": false
     }
   ],
   "groups": [

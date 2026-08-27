@@ -297,12 +297,15 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 		if target == protoResponses {
 			cfgPath = p.ResponsesEndpoint
 		}
-		pathRewritten := cfgPath != "" && cfgPath != sub
+		realPath := cfgPath
+		if realPath == "" {
+			realPath = sub
+		}
 		h.proxyLog(a, logging.LevelInfo, "[API Proxy Forward] "+h.method+" "+h.origPath+" -> "+p.Name+
 			" ("+orDefault(candModel, "default")+")"+
 			ifAny(h.keyName != "", " [Key: "+h.keyName+"]", "")+
 			ifAny(inbound != target, " [convert "+inbound+"->"+target+"]", "")+
-			ifAny(pathRewritten, " => "+cfgPath, ""))
+			" [=> "+realPath+"]")
 		if h.logDetail == "all" {
 			h.proxyLog(a, logging.LevelInfo, "[API Proxy Request URL] "+h.method+" "+targetURL)
 			if h.logBody && (h.method == "POST" || h.method == "PUT") && attemptBody != nil {
@@ -345,6 +348,13 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 			convBody, cerr := convertRequestBody(inbound, flipped, candBody)
 			if cerr == nil {
 				probeURL := buildTargetURL(p, flipped)
+				probeRealPath := p.ChatEndpoint
+				if flipped == protoResponses {
+					probeRealPath = p.ResponsesEndpoint
+				}
+				if probeRealPath == "" {
+					probeRealPath = targetSubPath(flipped)
+				}
 				res2, cancel2, ab2, rs2, st2, te2 := a.forwardOnce(h, p, convBody, probeURL, r.Context(), sem)
 				if ab2 {
 					h.proxyLog(a, logging.LevelWarn, "[API Proxy Aborted] Client closed connection ("+spanMs(h.start)+")")
@@ -357,7 +367,7 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 						a.Health.RecordSuccess(p.ID, candModel)
 					}
 					a.persistDiscoveredProtocol(p.ID, candModel, flipped)
-					h.proxyLog(a, logging.LevelInfo, "[API Proxy] 404 probe succeeded by flipping to '"+flipped+"' for "+p.Name+"/"+candModel)
+					h.proxyLog(a, logging.LevelInfo, "[API Proxy] protocol probe succeeded by flipping to '"+flipped+"' ("+p.Name+"/"+candModel+") [=> "+probeRealPath+"]")
 					if inbound != flipped {
 						a.transpileResponse(w, r, h, p, res2, inbound, flipped, candModel)
 					} else {
