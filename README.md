@@ -1,43 +1,41 @@
 # LLM Proxy
 
-轻量级 LLM API 代理服务，提供 OpenAI 兼容接口和 Web 管理面板。支持多级代理串联，自动传播超时和连接断开信号。编译为单文件 Go 二进制，内置 SQLite 日志存储。
+Lightweight LLM API proxy with OpenAI-compatible endpoints and a web dashboard. Supports multi-level chaining, automatic timeout/disconnect propagation, and compiles to a single Go binary with embedded SQLite logging.
 
-> **English**: A lightweight LLM API proxy with OpenAI-compatible `/v1/*` endpoints and a web dashboard. Single Go binary (embedded React + SQLite), multi-provider fallback, virtual keys (`sk-proxy-*`), SSE streaming, timeout/circuit-breaker, and automatic **Chat ↔ Responses** protocol conversion with per-model auto-probe. See *Configuration* and *Deployment* below (Chinese docs) — quick start: `cp config.json.example config/config.json && npm run build:go && ./dist/llmproxy` → `http://localhost:3000`.
+## Features
 
-## 核心功能
+- **OpenAI-Compatible Proxy** — Transparent forwarding of `/v1/*` to upstream LLMs (chat/completions, embeddings, etc.)
+- **Streaming** — Full SSE support with hop-by-hop forwarding and incremental `usage`/`model` parsing
+- **Automatic Protocol Conversion** — Bidirectional `Chat Completions` (`/v1/chat/completions`) ↔ `Responses` (`/v1/responses`) conversion, including streaming, with per-model auto-probe
+- **Multi-Provider Management** — Configure multiple upstreams with automatic fallback along a candidate chain
+- **Virtual Keys** — `sk-proxy-*` key system with per-provider authorization and fine-grained access control
+- **Model Fallback** — If the requested model is not in the provider's `models` list, automatically substitutes `defaultModel`
+- **Circuit Breaker & Concurrency Control** — Per-provider cooldown and semaphore-based concurrency limits
+- **Per-Provider Timeout** — Independent upstream timeout per provider; timeout returns `504` downstream and propagates disconnect
+- **Disconnect Propagation** — Disconnect at any hop propagates to both ends to prevent hanging connections
+- **Web Dashboard** — React SPA for managing providers/keys, live logs, API Playground, and usage stats
+- **SQLite Log Store** — System logs + request usage logs, filterable by key/model/provider/status/time
+- **Optional Admin Auth** — Password-protected dashboard
+- **Single Binary** — Go build with embedded frontend, no Node/Python runtime required
 
-- **OpenAI 兼容代理** — 透明转发 `/v1/*` 到后端 LLM（chat/completions、embeddings 等）
-- **流式传输** — 完整支持 SSE 流式响应，逐级转发，usage/model 增量解析
-- **多提供商管理** — 同时配置多个提供商，请求按候选链自动降级
-- **虚拟密钥** — `sk-proxy-*` 密钥体系，按 provider 授权，细粒度控制客户端权限
-- **模型回退** — 请求模型不在 provider 的 `models` 列表时，自动替换为 `defaultModel`
-- **熔断与并发控制** — provider 级别熔断（cooldown 降级）与信号量并发限制
-- **可配置上游超时** — 每个 provider 独立设置超时，超时自动向下游返回 504 并断开链路
-- **链路断开传播** — 链路任意节点断开，自动向两端传播断开信号，防止连接挂死
-- **Web 管理面板** — React SPA，管理提供商/密钥、实时日志、API Playground、用量统计
-- **SQLite 日志存储** — 系统日志 + 请求用量日志，支持按 key/model/provider/status/时间过滤
-- **hasDetail 实时解析** — 请求日志的 Detail 按钮基于系统日志实时查询，清空日志后自动隐藏
-- **可选管理认证** — 管理后台密码保护
-- **单文件二进制** — Go 编译，内嵌前端，无 Node/Python 运行时依赖
-
-## 快速开始
+## Quick Start
 
 ```bash
-git clone <repo> && cd llmproxy
+git clone https://github.com/scyslz/llmproxy && cd llmproxy
 cp config.json.example config/config.json
-# 编辑 config/config.json
+# edit config/config.json
 npm run build:go && ./dist/llmproxy
 ```
 
-访问 `http://localhost:3000` 打开管理面板。
+Open `http://localhost:3000` for the dashboard.
 
-## 部署
+## Deployment
 
 ```bash
-# 生产构建（前端 + Go 二进制）
+# Production build (frontend + Go binary)
 npm run build:go
 
-# 直接启动
+# Run directly
 ./dist/llmproxy
 
 # Docker
@@ -48,11 +46,11 @@ docker run -d -p 3000:3000 \
   llmproxy
 ```
 
-> **重要**：请求用量数据（SQLite）存放在 `/app/logs/requests.db`，系统日志在 `/app/logs/system_logs.db`。`docker run` 时必须挂载 `logs` 目录，否则容器删除/重建后数据会丢失。配置同样需要挂载（`-v $PWD/config:/app/config`）。
+> **Important**: Request usage data (SQLite) is stored at `/app/logs/requests.db` and system logs at `/app/logs/system_logs.db`. When using `docker run`, you must mount the `logs` directory or data will be lost on container recreation. The same applies to `config` (`-v $PWD/config:/app/config`).
 
-Docker Compose 直接使用镜像 `scyslz/llmproxy`，无需本地构建。容器内的配置目录为 `/app/config`（挂载宿主机的 `config/`），日志与 SQLite 数据位于 `/app/logs`，`compose.yaml` 已自动将这两个目录挂载到宿主机，配置修改后重启生效：`docker compose restart`。
+Docker Compose uses image `scyslz/llmproxy` without local build. Inside the container config is at `/app/config` (host `config/`) and logs/SQLite at `/app/logs`; `compose.yaml` already mounts both. After config changes, restart: `docker compose restart`.
 
-## 配置
+## Configuration
 
 ```jsonc
 {
@@ -62,10 +60,10 @@ Docker Compose 直接使用镜像 `scyslz/llmproxy`，无需本地构建。容�
   "adminPassword": "your-password",
   "debug": false,
   "logDetail": "basic",          // off | basic | error | all
-  "logBody": false,              // 是否记录请求/响应体
-  "maxLogSizeMB": 10,            // 系统日志库文件大小上限
-  "maxRequestLogs": 10000,       // 请求用量日志保留条数，超出自动清理最旧记录
-  "activeLogFile": 1,            // 日志桶编号（1|2），轮转时切换
+  "logBody": false,              // log request/response bodies (requires logDetail=all)
+  "maxLogSizeMB": 10,            // system log DB size limit
+  "maxRequestLogs": 10000,       // max retained request logs (oldest pruned)
+  "activeLogFile": 1,            // log bucket 1|2, toggled on rotation
   "providers": [
     {
       "id": "my-provider",
@@ -74,114 +72,150 @@ Docker Compose 直接使用镜像 `scyslz/llmproxy`，无需本地构建。容�
       "apiKey": "sk-xxx",
       "enabled": true,
       "models": ["gpt-4o"],
-      "defaultModel": "gpt-4o",   // 请求模型不在 models 列表时的回退模型，留空用第一个
-      "concurrency": 0,           // 0 = 不限并发
-      "timeout": 120000,          // 上游请求超时(ms)，0 或省略 = 不超时
-      "openaiEndpoint": ""        // 可选，上游转发路径，如 /chat/completions
+      "defaultModel": "gpt-4o",   // fallback when requested model not in models, defaults to models[0]
+      "protocol": "chat",         // "chat" (default) | "responses" — upstream protocol, auto-probed per model
+      "modelProtocols": {         // auto-filled by probe: model -> actual protocol, cleared on save
+        "gpt-4o-mini": "chat"
+      },
+      "concurrency": 0,           // 0 = unlimited
+      "timeout": 120000,          // upstream timeout in ms, 0 = no timeout
+      "chatEndpoint": "/chat/completions",       // optional override
+      "responsesEndpoint": "/responses"          // optional override
     }
   ],
   "keys": [
     {
       "key": "sk-proxy-xxx",
       "name": "all",
-      "providerIds": ["all"]     // 绑定具体 provider id 数组，或 ["all"] 走全局启用集
+      "providerIds": ["all"]     // specific provider ids or ["all"] for all enabled
     }
   ]
 }
 ```
 
-### 顶层字段
+### Top-Level Fields
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `listen` | string | 监听地址，默认 `:3000` |
-| `enableVirtualKey` | boolean | 是否启用虚拟密钥校验 |
-| `enableAdminAuth` | boolean | 管理后台密码保护 |
-| `adminPassword` | string | 管理后台密码，默认 `admin` |
-| `logDetail` | string | 日志详细级别：`off`/`basic`/`error`/`all` |
-| `logBody` | boolean | 是否记录请求/响应体（需 `logDetail=all`） |
-| `maxLogSizeMB` | number | 系统日志库大小上限（MB），超出自动轮转 |
-| `maxRequestLogs` | number | 请求用量日志保留条数 |
-| `activeLogFile` | number | 当前日志桶（1/2），轮转自动切换 |
-| `providers` | array | 上游提供商列表 |
-| `keys` | array | 虚拟密钥列表 |
+| Field | Type | Description |
+|-------|------|-------------|
+| `listen` | string | Listen address, default `:3000` |
+| `enableVirtualKey` | boolean | Enable virtual key validation |
+| `enableAdminAuth` | boolean | Password-protect dashboard |
+| `adminPassword` | string | Dashboard password, default `admin` |
+| `logDetail` | string | Log verbosity: `off`/`basic`/`error`/`all` |
+| `logBody` | boolean | Log request/response bodies (requires `logDetail=all`) |
+| `maxLogSizeMB` | number | System log DB size limit (MB), auto-rotated |
+| `maxRequestLogs` | number | Max retained request logs |
+| `activeLogFile` | number | Active log bucket (1/2) |
+| `providers` | array | Upstream provider list |
+| `keys` | array | Virtual key list |
 
-### Provider 字段
+### Provider Fields
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | string | 唯一标识 |
-| `name` | string | 显示名称 |
-| `baseUrl` | string | 上游基础地址，自动补全 `/v1` |
-| `apiKey` | string | 上游 API Key |
-| `enabled` | boolean | 是否启用 |
-| `models` | string[] | 支持模型列表，请求模型不匹配时自动用 `defaultModel` 回退 |
-| `defaultModel` | string | 回退模型，未配置则用 `models[0]` |
-| `concurrency` | number | 并发限制，0 = 不限 |
-| `timeout` | number | 上游请求超时毫秒数，0/省略 = 不超时 |
-| `openaiEndpoint` | string | 可选，上游转发路径（如 `/chat/completions`），留空则自动基于 `baseUrl` 推导 |
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique identifier |
+| `name` | string | Display name |
+| `baseUrl` | string | Upstream base URL, auto-appends `/v1` if needed |
+| `apiKey` | string | Upstream API key |
+| `enabled` | boolean | Whether enabled |
+| `models` | string[] | Supported models; fallback to `defaultModel` if mismatch |
+| `defaultModel` | string | Fallback model, defaults to `models[0]` |
+| `protocol` | string | Upstream protocol: `chat` (default) or `responses` |
+| `modelProtocols` | map | Per-model discovered protocol (`model -> protocol`), cleared on provider save |
+| `concurrency` | number | Concurrency limit, `0` = unlimited |
+| `timeout` | number | Upstream timeout in ms, `0` = no timeout |
+| `chatEndpoint` | string | Optional override for chat path (e.g. `/chat/completions`) |
+| `responsesEndpoint` | string | Optional override for responses path (e.g. `/responses`) |
 
-### Virtual Key 字段
+### Virtual Key Fields
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `key` | string | 客户端密钥（`sk-proxy-*`） |
-| `name` | string | 显示名称 |
-| `providerIds` | string[] | 授权 provider id 数组；`["all"]` 或 `["*"]` 表示全部启用集 |
+| Field | Type | Description |
+|-------|------|-------------|
+| `key` | string | Client key (`sk-proxy-*`) |
+| `name` | string | Display name |
+| `providerIds` | string[] | Authorized provider ids; `["all"]` or `["*"]` means all enabled |
+| `groupId` | string | Optional group id (takes precedence over `providerIds`) |
 
-**绑定规则**：key 的 `providerIds` 有具体值时（绑定 key），**不检查 provider 的 enabled**，按数组顺序作为降级优先级；`["all"]`/未绑定时走全局 enabled provider 集合。
+**Binding rules**: If `providerIds` has specific values, the provider's `enabled` flag is ignored and the array order defines fallback priority; `["all"]` or unbound uses the global enabled set.
 
-### 多级代理
+## Protocol Auto-Conversion (Chat ↔ Responses)
 
-可在上游 provider 的 `baseUrl` 指向另一个 LLM Proxy 实例，形成多级链路。超时和连接断开信号会自动向两端传播：
+LLM Proxy natively speaks both OpenAI protocols and converts automatically when inbound and upstream protocols differ (including SSE streaming):
+
+- **Inbound** is determined by request path: `/v1/responses` → `responses`, `/v1/chat/completions` → `chat`
+- **Upstream** is determined per `(provider, model)` as `modelProtocols[model] ?? protocol ?? "chat"` (defaults to `chat` for backward compatibility)
+
+| Inbound | Upstream | Action |
+|---------|----------|--------|
+| `chat` | `chat` | Passthrough (zero-copy) |
+| `responses` | `responses` | Passthrough |
+| `responses` | `chat` | `input`/`instructions`/`tools` → `messages`/`tools`; `max_output_tokens`→`max_tokens`; response `choices`/`tool_calls` → `output`/`function_call` |
+| `chat` | `responses` | `messages`/`tools` → `input`/`tools`; `max_tokens`→`max_output_tokens`; response `output` → `choices` |
+
+**Per-model auto-probe**: When `modelProtocols` is unknown (`probe=true`), the proxy first tries the inbound protocol. If upstream returns **any non-`200`** status, it flips to the other protocol **once** per request, converts the body, and retries (`buildTargetURL` + `convertRequestBody`). On `2xx` success it persists `modelProtocols[model]=flipped` to `config.json` and logs `protocol probe succeeded by flipping to '...'`. Subsequent requests for that model go directly to the discovered protocol.
+
+**Clear on save**: Creating or updating a provider via `POST /api/providers` or `PUT /api/providers/:id` clears `modelProtocols` (set to `null`) so the next request re-probes. This is intentional—editing a provider resets per-model discoveries.
+
+**Playground & Direct Test**: `POST /api/providers/:id/chat/completions` always sends `chat` from the UI. If the provider is `responses` (or unknown but probed as `responses`), the server converts the request to `responses` and transpile the response back to `chat` for the UI (`internal/proxy/models.go:150` + `internal/proxy/protocol.go:179/247/276`).
+
+**Stream conversion**:
+- `chat` chunk `delta.content` → `response.output_text.delta` + `response.created`/`output_item` events
+- `responses` event `output_text.delta` → `chat` chunk with `delta.content`; `function_call` deltas → `tool_calls`
+
+## Multi-Level Proxy Chaining
+
+Set a provider's `baseUrl` to another LLM Proxy instance to chain:
 
 ```
-客户端 → Level 1 → Level 2 → 上游 API
+Client → Level 1 → Level 2 → Upstream API
 ```
 
-- Level 2 超时 → 返回 504 → Level 1 正常转发 → 客户端收到 504
-- 客户端断开 → Level 1 abort → Level 2 abort → 上游连接断开
-- 上游断开 → Level 2 destroy → Level 1 reader 抛错 → Level 1 destroy → 客户端感知
+- Level 2 timeout → `504` → Level 1 forwarded → client `504`
+- Client disconnect → Level 1 abort → Level 2 abort → upstream closed
+- Upstream disconnect → Level 2 destroy → Level 1 reader error → Level 1 destroy → client sees disconnect
 
-## 项目结构
+## Project Structure
 
 ```
-├── cmd/llmproxy/main.go        # 入口（Go）
+├── cmd/llmproxy/main.go        # Entry (Go)
 ├── internal/
-│   ├── proxy/                  # 代理引擎（转发、降级、流式、usage 解析）
-│   ├── logstore/               # SQLite 日志存储（system_logs / request_logs）
-│   ├── logging/                # 日志记录（内存环形缓冲 + 落库 + 轮转）
-│   ├── config/                 # 配置加载与持久化
-│   ├── handlers/               # 管理 API
-│   ├── circuit/                # 熔断器
-│   ├── auth/                   # 管理认证与 key 提取
-│   └── server/                 # HTTP 服务与路由（内嵌前端）
-├── src/                        # React 前端
-├── config/config.json          # 运行配置（不在 git 中）
-├── config.json.example         # 配置示例
-├── logs/                       # SQLite 日志数据
+│   ├── proxy/                  # Forwarding, fallback, streaming, usage parsing, protocol conversion
+│   │   ├── protocol.go         # Chat ↔ Responses conversion & auto-probe
+│   │   └── models.go           # Direct provider test with conversion
+│   ├── convert/                # Protocol converters (ported from QuantumNous/new-api, AGPL-3.0)
+│   ├── logstore/               # SQLite stores (system_logs / request_logs)
+│   ├── logging/                # Ring buffer + persistence + rotation
+│   ├── config/                 # Config load/persist
+│   ├── handlers/               # Admin API (providers/keys/groups/logs)
+│   ├── circuit/                # Circuit breaker
+│   ├── auth/                   # Admin auth & key extraction
+│   └── server/                 # HTTP routing (embedded frontend)
+├── src/                        # React frontend (Vite + Tailwind)
+├── config/config.json          # Runtime config (not in git)
+├── config.json.example         # Example config
+├── logs/                       # SQLite data
 ├── Dockerfile
 ├── compose.yaml
-└── dist/llmproxy               # 编译产物（Go 二进制，内嵌前端）
+└── dist/llmproxy               # Binary (embedded frontend)
 ```
 
-## 技术栈
+## Tech Stack
 
-后端: Go（标准库 + modernc.org/sqlite 纯 Go SQLite）
-前端: React + Vite + Tailwind CSS + Lucide
-部署: 单文件二进制 / Docker multi-arch（amd64 + arm64）
+Backend: Go (stdlib + `modernc.org/sqlite` pure-Go SQLite)
+Frontend: React + Vite + Tailwind CSS + Lucide
+Deploy: Single binary / Docker multi-arch (amd64 + arm64)
 
-## 测试与构建
+## Testing & Build
 
 ```bash
-# 单元测试
+# Unit tests
 go test ./...
 
-# lint
+# Lint
 npm run lint
 
-# 构建
-npm run build:go           # 前端 + 当前架构二进制
-npm run build:go:arm64     # arm64 二进制
-npm run build:go:all       # 前端 + amd64 + arm64
+# Build
+npm run build:go           # frontend + binary for current arch
+npm run build:go:arm64     # arm64 binary
+npm run build:go:all       # frontend + amd64 + arm64
 ```
