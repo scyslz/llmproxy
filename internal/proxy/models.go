@@ -144,10 +144,13 @@ func (a *App) HandleDirectChat(w http.ResponseWriter, r *http.Request, providerI
 
 	// 若 provider 声明为 responses 协议，Playground 仍以 chat/completions 形态发送，
 	// 此处将请求转换为 responses 并指向 /v1/responses，响应再转回 chat。
+	// 未确定协议时，非200 均翻转一次（与 HandleProxy 保持一致）。
 	needsConvert := false
 	sendURL := targetURL
 	sendBody := rawBody
-	if target, known := p.upstreamProtocol(model); known && target == protoResponses {
+	targetProto, known := p.upstreamProtocol(model)
+	probe := !known
+	if known && targetProto == protoResponses {
 		needsConvert = true
 		var m map[string]interface{}
 		if json.Unmarshal(rawBody, &m) == nil {
@@ -167,12 +170,45 @@ func (a *App) HandleDirectChat(w http.ResponseWriter, r *http.Request, providerI
 		writeJSON(w, 502, map[string]string{"error": "Provider test failed: " + err.Error()})
 		return
 	}
-	defer resp.Body.Close()
 
 	if needsConvert {
 		a.transpileResponse(w, r, h, p, resp, protoChat, protoResponses, model)
 		return
 	}
+
+	// 未确定协议时，若首次 chat 尝试非200，则翻转到 responses 重试一次
+	if probe && resp.StatusCode != 200 {
+		// 消费并关闭首次响应
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 64*1024))
+		resp.Body.Close()
+		var m2 map[string]interface{}
+		if json.Unmarshal(rawBody, &m2) == nil {
+			if conv2, cerr2 := convertRequestBody(protoChat, protoResponses, m2); cerr2 == nil {
+				if b2, e2 := json.Marshal(conv2); e2 == nil {
+					flipURL := buildTargetURL(p, protoResponses)
+					resp2, err2 := a.Client.Do(r.Context(), "POST", flipURL, hdr, bytes.NewReader(b2), p.Timeout)
+					if err2 == nil {
+						if resp2.StatusCode >= 200 && resp2.StatusCode < 300 {
+							a.persistDiscoveredProtocol(p.ID, model, protoResponses)
+							directLog("info", "[Provider Test] protocol probe succeeded by flipping to 'responses' ("+p.Name+"/"+model+") [=> /responses]")
+							a.transpileResponse(w, r, h, p, resp2, protoChat, protoResponses, model)
+							return
+						}
+						// 翻转后仍失败，使用翻转后的响应继续透传
+						resp = resp2
+					} else {
+						// 翻转请求本身失败，透传原失败
+						writeJSON(w, 502, map[string]string{"error": "Provider test failed: HTTP " + itoa(resp.StatusCode)})
+						return
+					}
+				}
+			}
+		} else {
+			writeJSON(w, 502, map[string]string{"error": "Provider test failed: HTTP " + itoa(resp.StatusCode)})
+			return
+		}
+	}
+	defer resp.Body.Close()
 
 	if h.detailActiveFor(resp.StatusCode) {
 		if logDetail == "error" {

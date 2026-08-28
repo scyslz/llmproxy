@@ -98,9 +98,10 @@ export default function Playground({ virtualKeys, providers, activeProviderName,
       if (selectedKey !== "") setSelectedKey("");
       return;
     }
-    // When enableVirtualKey is true:
-    // Only reset if selectedKey is non-empty AND that key no longer exists in virtualKeys
-    if (selectedKey !== "" && !virtualKeys.some(k => k.key === selectedKey)) {
+    // When enableVirtualKey is true: ensure a valid key is selected by default
+    if (selectedKey === "" && virtualKeys.length > 0) {
+      setSelectedKey(virtualKeys[0].key);
+    } else if (selectedKey !== "" && !virtualKeys.some(k => k.key === selectedKey)) {
       setSelectedKey(virtualKeys.length > 0 ? virtualKeys[0].key : "");
     }
   }, [virtualKeys, selectedKey, enableVirtualKey]);

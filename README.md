@@ -2,6 +2,8 @@
 
 轻量级 LLM API 代理服务，提供 OpenAI 兼容接口和 Web 管理面板。支持多级代理串联，自动传播超时和连接断开信号。编译为单文件 Go 二进制，内置 SQLite 日志存储。
 
+> **English**: A lightweight LLM API proxy with OpenAI-compatible `/v1/*` endpoints and a web dashboard. Single Go binary (embedded React + SQLite), multi-provider fallback, virtual keys (`sk-proxy-*`), SSE streaming, timeout/circuit-breaker, and automatic **Chat ↔ Responses** protocol conversion with per-model auto-probe. See *Configuration* and *Deployment* below (Chinese docs) — quick start: `cp config.json.example config/config.json && npm run build:go && ./dist/llmproxy` → `http://localhost:3000`.
+
 ## 核心功能
 
 - **OpenAI 兼容代理** — 透明转发 `/v1/*` 到后端 LLM（chat/completions、embeddings 等）

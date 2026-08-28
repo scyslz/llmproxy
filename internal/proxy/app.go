@@ -338,9 +338,8 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// 404/500 探测：协议未知时翻转到另一协议重试一次。
-		// 部分网关对协议不匹配的请求返回 500（而非 404），故两者均触发翻转。
-		if (status == 404 || status == 500) && probe {
+		// 协议未确定时，非200 均翻转到另一协议重试一次（用户要求：状态码非200都该翻转一次）。
+		if probe && status != 200 {
 			flipped := protoChat
 			if target == protoChat {
 				flipped = protoResponses

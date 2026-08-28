@@ -177,9 +177,9 @@ func (a *App) transpileResponse(w http.ResponseWriter, r *http.Request, h *handl
 	// 流式：逐事件转写
 	var state interface{}
 	if inbound == protoChat && target == protoResponses {
-		state = convert.NewChatToResponsesStreamState("", model)
-	} else {
 		state = convert.NewResponsesToChatStreamState(model, true)
+	} else {
+		state = convert.NewChatToResponsesStreamState("", model)
 	}
 
 	reader := bufio.NewReader(res.Body)
@@ -247,22 +247,22 @@ func (a *App) transpileResponse(w http.ResponseWriter, r *http.Request, h *handl
 func convertResponseBody(inbound, target string, raw []byte) (out []byte, usage *convert.Usage, resModel string, err error) {
 	switch {
 	case inbound == protoChat && target == protoResponses:
-		var resp convert.OpenAITextResponse
+		var resp convert.OpenAIResponsesResponse
 		if e := json.Unmarshal(raw, &resp); e != nil {
 			return nil, nil, "", e
 		}
-		conv, u, e := convert.ChatCompletionsResponseToResponsesResponse(&resp, resp.Id)
+		conv, u, e := convert.ResponsesResponseToChatCompletionsResponse(&resp, resp.ID)
 		if e != nil {
 			return nil, nil, "", e
 		}
 		b, _ := json.Marshal(conv)
 		return b, u, conv.Model, nil
 	case inbound == protoResponses && target == protoChat:
-		var resp convert.OpenAIResponsesResponse
+		var resp convert.OpenAITextResponse
 		if e := json.Unmarshal(raw, &resp); e != nil {
 			return nil, nil, "", e
 		}
-		conv, u, e := convert.ResponsesResponseToChatCompletionsResponse(&resp, resp.ID)
+		conv, u, e := convert.ChatCompletionsResponseToResponsesResponse(&resp, resp.Id)
 		if e != nil {
 			return nil, nil, "", e
 		}
@@ -276,17 +276,6 @@ func convertResponseBody(inbound, target string, raw []byte) (out []byte, usage 
 func transpileSSEEvent(state interface{}, target, dataJSON string) []string {
 	var out []string
 	if target == protoResponses {
-		var event convert.ChatCompletionsStreamResponse
-		if err := json.Unmarshal([]byte(dataJSON), &event); err != nil {
-			return nil
-		}
-		events, _ := convert.ChatCompletionsStreamChunkToResponsesEvents(&event, state.(*convert.ChatToResponsesStreamState))
-		for _, ev := range events {
-			if b, e := json.Marshal(ev.Payload); e == nil {
-				out = append(out, "event: "+ev.Type+"\ndata: "+string(b)+"\n\n")
-			}
-		}
-	} else {
 		var event convert.ResponsesStreamResponse
 		if err := json.Unmarshal([]byte(dataJSON), &event); err != nil {
 			return nil
@@ -295,6 +284,17 @@ func transpileSSEEvent(state interface{}, target, dataJSON string) []string {
 		for _, ch := range chunks {
 			if b, e := json.Marshal(ch); e == nil {
 				out = append(out, "data: "+string(b)+"\n\n")
+			}
+		}
+	} else {
+		var event convert.ChatCompletionsStreamResponse
+		if err := json.Unmarshal([]byte(dataJSON), &event); err != nil {
+			return nil
+		}
+		events, _ := convert.ChatCompletionsStreamChunkToResponsesEvents(&event, state.(*convert.ChatToResponsesStreamState))
+		for _, ev := range events {
+			if b, e := json.Marshal(ev.Payload); e == nil {
+				out = append(out, "event: "+ev.Type+"\ndata: "+string(b)+"\n\n")
 			}
 		}
 	}

@@ -108,6 +108,8 @@ func (m *Manager) HandleCreateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.Enabled = false
+	// 新建时清空已探测的 model 协议，等待重新探测
+	p.ModelProtocols = nil
 	if err := m.Cfg.Update(func(c *domain.Config) {
 		c.Providers = append(c.Providers, p)
 	}); err != nil {
@@ -140,6 +142,8 @@ func (m *Manager) HandleUpdateProvider(w http.ResponseWriter, r *http.Request, i
 			if c.Providers[i].ID == id {
 				applyPatch(&c.Providers[i], body)
 				c.Providers[i].ID = id // prevent id change
+				// 保存时清空已确定的 model 协议，等待重新探测（用户要求：save provider清空确定好的 model 协议）
+				c.Providers[i].ModelProtocols = nil
 				break
 			}
 		}
