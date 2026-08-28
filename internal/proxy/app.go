@@ -375,11 +375,7 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 					cancel2()
 					return
 				}
-				// 翻转后仍失败：记录该次失败并继续候选链
-				a.Breaker.RecordFailure(p.ID)
-				if fromGroup {
-					a.Health.RecordFailure(p.ID, candModel)
-				}
+				// 翻转后仍失败：不单独计数，统一由外层一次失败计数，避免对同一 provider/model 重复计数
 				status = st2
 				timeoutErr = te2
 				reason = rs2
