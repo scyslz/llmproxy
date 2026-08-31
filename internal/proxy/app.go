@@ -354,6 +354,19 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 				if probeRealPath == "" {
 					probeRealPath = targetSubPath(flipped)
 				}
+				h.proxyLog(a, logging.LevelInfo, "[API Proxy Forward] "+h.method+" "+h.origPath+" -> "+p.Name+
+					" ("+orDefault(candModel, "default")+")"+
+					ifAny(h.keyName != "", " [Key: "+h.keyName+"]", "")+
+					ifAny(inbound != flipped, " [convert "+inbound+"->"+flipped+"]", "")+
+					" [=> "+probeRealPath+"]")
+				if h.logDetail == "all" {
+					h.proxyLog(a, logging.LevelInfo, "[API Proxy Request URL] "+h.method+" "+probeURL)
+					if h.logBody && (h.method == "POST" || h.method == "PUT") && convBody != nil {
+						if b, err := json.Marshal(convBody); err == nil {
+							h.proxyLog(a, logging.LevelInfo, "[API Proxy Request Body] "+string(b))
+						}
+					}
+				}
 				res2, cancel2, ab2, rs2, st2, te2 := a.forwardOnce(h, p, convBody, probeURL, r.Context(), sem)
 				if ab2 {
 					h.proxyLog(a, logging.LevelWarn, "[API Proxy Aborted] Client closed connection ("+spanMs(h.start)+")")
