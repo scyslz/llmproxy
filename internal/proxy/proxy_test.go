@@ -333,7 +333,7 @@ func TestGroup_DegradeWithLazyHealth(t *testing.T) {
 	if !s.InCooldown {
 		t.Fatal("fail|m should be in cooldown")
 	}
-	if s.FailCount != 1 {
-		t.Fatalf("failCount = %d, want 1", s.FailCount)
+	if s.FailCount != 2 {
+		t.Fatalf("failCount = %d, want 2 (initial attempt + protocol probe flip both failed)", s.FailCount)
 	}
 }

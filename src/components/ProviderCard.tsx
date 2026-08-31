@@ -53,8 +53,8 @@ export default function ProviderCard({
     apiKey: "",
     modelsString: "",
       concurrency: 0,
-      chatPath: "",
-      responsesPath: "",
+      chatEndpoint: "",
+      responsesEndpoint: "",
       defaultModel: "",
       protocol: ""
   });
@@ -86,8 +86,8 @@ export default function ProviderCard({
       apiKey: "",
         modelsString: preset.models.join(", "),
         concurrency: 0,
-        chatPath: "",
-        responsesPath: "",
+        chatEndpoint: "",
+        responsesEndpoint: "",
         defaultModel: "",
         protocol: ""
     });
@@ -102,8 +102,8 @@ export default function ProviderCard({
       apiKey: p.apiKey,
       modelsString: (p.models || []).join(", "),
       concurrency: p.concurrency || 0,
-        chatPath: p.chatPath || "",
-        responsesPath: p.responsesPath || "",
+        chatEndpoint: p.chatEndpoint || "",
+        responsesEndpoint: p.responsesEndpoint || "",
       defaultModel: p.defaultModel || "",
       protocol: p.protocol || ""
     });
@@ -119,8 +119,8 @@ export default function ProviderCard({
       apiKey: "",
         modelsString: "",
         concurrency: 0,
-        chatPath: "",
-        responsesPath: "",
+        chatEndpoint: "",
+        responsesEndpoint: "",
         defaultModel: "",
         protocol: ""
     });
@@ -240,8 +240,8 @@ export default function ProviderCard({
       apiKey: formData.apiKey.trim(),
       models,
       concurrency: formData.concurrency || 0,
-      chatPath: formData.chatPath.trim() || undefined,
-      responsesPath: formData.responsesPath.trim() || undefined,
+      chatEndpoint: formData.chatEndpoint.trim() || undefined,
+      responsesEndpoint: formData.responsesEndpoint.trim() || undefined,
       defaultModel,
       protocol: formData.protocol || undefined
     };
@@ -356,11 +356,11 @@ export default function ProviderCard({
                 <input
                   type="text"
                   placeholder="/chat/completions"
-                  value={formData.chatPath}
-                  onChange={(e) => setFormData({ ...formData, chatPath: e.target.value })}
+                  value={formData.chatEndpoint}
+                  onChange={(e) => setFormData({ ...formData, chatEndpoint: e.target.value })}
                   className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2 text-sm text-neutral-800 outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 font-mono shadow-2xs"
                 />
-                <p className="text-[10px] text-neutral-500">Optional. Overrides the chat completions path (e.g. /chat/completions); otherwise /v1/chat/completions is used.</p>
+                <p className="text-[10px] text-neutral-500">Optional. Overrides the default /chat/completions path.</p>
               </div>
             )}
             {formData.protocol !== "chat" && (
@@ -369,11 +369,11 @@ export default function ProviderCard({
                 <input
                   type="text"
                   placeholder="/responses"
-                  value={formData.responsesPath}
-                  onChange={(e) => setFormData({ ...formData, responsesPath: e.target.value })}
+                  value={formData.responsesEndpoint}
+                  onChange={(e) => setFormData({ ...formData, responsesEndpoint: e.target.value })}
                   className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2 text-sm text-neutral-800 outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 font-mono shadow-2xs"
                 />
-                <p className="text-[10px] text-neutral-500">Optional. Overrides the responses path (e.g. /responses); otherwise /v1/responses is used.</p>
+                <p className="text-[10px] text-neutral-500">Optional. Overrides the default /responses path.</p>
               </div>
             )}
 
