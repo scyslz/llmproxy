@@ -18,6 +18,23 @@ const (
 	protoResponses = "responses"
 )
 
+func isConvertPath(path string) bool {
+	return strings.HasSuffix(path, "/chat/completions") || strings.HasSuffix(path, "/responses")
+}
+
+func buildPassthroughURL(base, origPath string) string {
+	base = strings.TrimRight(base, "/")
+	if strings.HasSuffix(base, "/v1") && strings.HasPrefix(origPath, "/v1/") {
+		origPath = origPath[3:]
+	} else if strings.HasSuffix(base, "/v1") && origPath == "/v1" {
+		origPath = ""
+	}
+	if origPath != "" && !strings.HasPrefix(origPath, "/") {
+		origPath = "/" + origPath
+	}
+	return base + origPath
+}
+
 // inboundProtocol 根据请求路径判断客户端使用的协议。
 func inboundProtocol(path string) string {
 	if strings.HasSuffix(path, "/v1/responses") || strings.HasSuffix(path, "/responses") {

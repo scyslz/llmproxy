@@ -171,8 +171,12 @@ func Run(cfg *config.Manager, sysStore *logstore.SystemStore, reqStore *logstore
 	mux.HandleFunc("/api/request-logs", hand.HandleListRequestLogs)
 
 	// --- Proxy core ---
-	mux.HandleFunc("/v1/", proxyApp.HandleProxy)
 	mux.HandleFunc("/v1/models", proxyApp.HandleModels)
+	mux.HandleFunc("/v1/", proxyApp.HandleProxy)
+	mux.HandleFunc("/chat/completions", proxyApp.HandleProxy)
+	mux.HandleFunc("/responses", proxyApp.HandleProxy)
+	mux.HandleFunc("/v1/responses", proxyApp.HandleProxy)
+	mux.HandleFunc("/v1/chat/completions", proxyApp.HandleProxy)
 
 	// --- Static files (SPA) ---
 	staticFS, err := fs.Sub(webFS, "webui/dist")

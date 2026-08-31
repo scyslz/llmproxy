@@ -179,16 +179,21 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 
 	// 解析请求体
 	var reqBody map[string]interface{}
+	var rawBody []byte
 	if h.method == "POST" || h.method == "PUT" {
 		data, err := io.ReadAll(io.LimitReader(r.Body, 10*1024*1024))
 		if err != nil {
 			writeJSON(w, 400, map[string]string{"error": "Invalid request body"})
 			return
 		}
+		rawBody = data
 		if len(data) > 0 {
 			if err := json.Unmarshal(data, &reqBody); err != nil {
-				writeJSON(w, 400, map[string]string{"error": "Invalid JSON body"})
-				return
+				if isConvertPath(h.origPath) {
+					writeJSON(w, 400, map[string]string{"error": "Invalid JSON body"})
+					return
+				}
+				reqBody = nil
 			}
 		}
 	} else {
@@ -230,6 +235,11 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 		h.reqModel = model
 	}
 	origModel := h.reqModel
+
+	if !isConvertPath(h.origPath) {
+		a.handlePassthrough(w, r, h, cands, fromGroup, rawBody)
+		return
+	}
 
 	for _, p := range cands {
 		// Group 路由: 懒探测冷却判断（provider+model 粒度）
@@ -430,6 +440,138 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 		a.logRequest(h, h.lastProvider, h.reqModel, status, 0, 0, 0, 0, false, last)
 	}
 	writeJSON(w, status, map[string]string{"error": errMsg})
+}
+
+func (a *App) handlePassthrough(w http.ResponseWriter, r *http.Request, h *handlerCtx, cands []*Provider, fromGroup bool, rawBody []byte) {
+	var p *Provider
+	for _, cand := range cands {
+		if fromGroup && h.reqModel != "" && a.Health.InCooldown(cand.ID, h.reqModel) {
+			continue
+		}
+		if a.Breaker.InCooldown(cand.ID) {
+			continue
+		}
+		p = cand
+		break
+	}
+	if p == nil {
+		msg := "No available provider for passthrough to " + h.origPath
+		h.proxyLog(a, logging.LevelError, msg)
+		a.logRequest(h, "", h.reqModel, 503, 0, 0, 0, 0, false, msg)
+		writeJSON(w, 503, map[string]string{"error": "Service Unavailable: No provider available for passthrough"})
+		return
+	}
+	targetURL := buildPassthroughURL(p.BaseURL, r.URL.Path)
+	if r.URL.RawQuery != "" {
+		targetURL += "?" + r.URL.RawQuery
+	}
+	hdr := http.Header{}
+	if ct := r.Header.Get("Content-Type"); ct != "" {
+		hdr.Set("Content-Type", ct)
+	} else {
+		hdr.Set("Content-Type", "application/json")
+	}
+	if h.apiKey != "" {
+		hdr.Set("Authorization", "Bearer "+h.apiKey)
+	} else if p.APIKey != "" {
+		hdr.Set("Authorization", "Bearer "+p.APIKey)
+	}
+	for _, k := range []string{"Accept", "Accept-Encoding", "User-Agent"} {
+		if v := r.Header.Get(k); v != "" {
+			hdr.Set(k, v)
+		}
+	}
+	sem := a.Sem(p.ID, p.Concurrency)
+	if sem != nil {
+		sem.Acquire()
+		defer sem.Release()
+	}
+	ctx, cancel := context.WithCancel(r.Context())
+	headersDone := make(chan struct{})
+	timeoutErrState := false
+	if p.Timeout > 0 {
+		t := time.AfterFunc(p.Timeout, func() {
+			select {
+			case <-headersDone:
+			default:
+				timeoutErrState = true
+				cancel()
+			}
+		})
+		defer t.Stop()
+	}
+	var bodyReader io.Reader
+	if len(rawBody) > 0 {
+		bodyReader = bytes.NewReader(rawBody)
+	}
+	resp, err := a.Client.Do(ctx, h.method, targetURL, hdr, bodyReader, 0)
+	close(headersDone)
+	if err != nil {
+		cancel()
+		if r.Context().Err() == context.Canceled {
+			a.logRequest(h, p.Name, h.reqModel, 499, 0, 0, 0, 0, false, "client closed connection")
+			return
+		}
+		if timeoutErrState {
+			a.logRequest(h, p.Name, h.reqModel, 504, 0, 0, 0, 0, false, "timeout after "+p.Timeout.String())
+			writeJSON(w, 504, map[string]string{"error": "Upstream timeout: " + p.Name})
+			return
+		}
+		reason := "connection error: " + err.Error()
+		a.Breaker.RecordFailure(p.ID)
+		if fromGroup && h.reqModel != "" {
+			a.Health.RecordFailure(p.ID, h.reqModel)
+		}
+		a.logRequest(h, p.Name, h.reqModel, 502, 0, 0, 0, 0, false, reason)
+		writeJSON(w, 502, map[string]string{"error": reason})
+		return
+	}
+	defer cancel()
+	defer resp.Body.Close()
+	a.Breaker.RecordSuccess(p.ID)
+	if fromGroup && h.reqModel != "" {
+		a.Health.RecordSuccess(p.ID, h.reqModel)
+	}
+	for k, vv := range resp.Header {
+		lk := strings.ToLower(k)
+		if lk == "transfer-encoding" || lk == "content-encoding" || lk == "content-length" {
+			continue
+		}
+		for _, v := range vv {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	buf := make([]byte, 32*1024)
+	statusOut := resp.StatusCode
+	errMsg := ""
+	for {
+		n, rerr := resp.Body.Read(buf)
+		if n > 0 {
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				errMsg = "client closed connection"
+				statusOut = 499
+				break
+			}
+			if fl, ok := w.(http.Flusher); ok {
+				fl.Flush()
+			}
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			if r.Context().Err() == context.Canceled {
+				errMsg = "client closed connection"
+				statusOut = 499
+			} else {
+				errMsg = "stream error: " + rerr.Error()
+				statusOut = 502
+			}
+			break
+		}
+	}
+	a.logRequest(h, p.Name, h.reqModel, statusOut, 0, 0, 0, 0, false, errMsg)
 }
 
 // forwardOnce 对单个 provider 发起请求。res 非空表示成功；cancelFn 需在
