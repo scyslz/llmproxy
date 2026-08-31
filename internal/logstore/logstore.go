@@ -426,7 +426,7 @@ func (s *RequestStore) Query(f QueryFilter, limit, offset int) ([]RequestLog, er
 		return nil, err
 	}
 	defer rows.Close()
-	var out []RequestLog
+	out := make([]RequestLog, 0)
 	for rows.Next() {
 		var l RequestLog
 		var t int64
