@@ -308,10 +308,10 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 			" [=> "+realPath+"]")
 		if h.logDetail == "all" {
 			h.proxyLog(a, logging.LevelInfo, "[API Proxy Request URL] "+h.method+" "+targetURL)
-			if h.logBody && (h.method == "POST" || h.method == "PUT") && attemptBody != nil {
-				if b, err := json.Marshal(attemptBody); err == nil {
-					h.proxyLog(a, logging.LevelInfo, "[API Proxy Request Body] "+string(b))
-				}
+		}
+		if h.logBody && h.detailActiveFor(500) && (h.method == "POST" || h.method == "PUT") && attemptBody != nil {
+			if b, err := json.Marshal(attemptBody); err == nil {
+				h.proxyLog(a, logging.LevelInfo, "[API Proxy Request Body] "+string(b))
 			}
 		}
 
@@ -361,10 +361,10 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 					" [=> "+probeRealPath+"]")
 				if h.logDetail == "all" {
 					h.proxyLog(a, logging.LevelInfo, "[API Proxy Request URL] "+h.method+" "+probeURL)
-					if h.logBody && (h.method == "POST" || h.method == "PUT") && convBody != nil {
-						if b, err := json.Marshal(convBody); err == nil {
-							h.proxyLog(a, logging.LevelInfo, "[API Proxy Request Body] "+string(b))
-						}
+				}
+				if h.logBody && h.detailActiveFor(500) && (h.method == "POST" || h.method == "PUT") && convBody != nil {
+					if b, err := json.Marshal(convBody); err == nil {
+						h.proxyLog(a, logging.LevelInfo, "[API Proxy Request Body] "+string(b))
 					}
 				}
 				res2, cancel2, ab2, rs2, st2, te2 := a.forwardOnce(h, p, convBody, probeURL, r.Context(), sem)
@@ -485,13 +485,22 @@ func (a *App) forwardOnce(h *handlerCtx, p *Provider, candBody map[string]interf
 		return nil, nil, false, "connection error: " + err.Error(), 502, false
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if h.detailActiveFor(resp.StatusCode) {
+		detailActive := h.detailActiveFor(resp.StatusCode)
+		if detailActive {
 			if h.logDetail == "error" {
 				h.proxyLog(a, logging.LevelInfo, "[API Proxy Request Headers] "+formatHeaders(hdr))
 			}
 			h.proxyLog(a, logging.LevelInfo, "[API Proxy Response Headers] "+formatHeaders(resp.Header))
 		}
-		io.Copy(io.Discard, io.LimitReader(resp.Body, 64*1024))
+		if detailActive && h.logBody {
+			bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+			if len(bodyBytes) > 0 {
+				h.proxyLog(a, logging.LevelInfo, "[API Proxy Response Body] "+string(bodyBytes))
+			}
+			io.Copy(io.Discard, resp.Body)
+		} else {
+			io.Copy(io.Discard, io.LimitReader(resp.Body, 64*1024))
+		}
 		resp.Body.Close()
 		cancel()
 		return nil, nil, false, "HTTP "+itoa(resp.StatusCode), resp.StatusCode, false
