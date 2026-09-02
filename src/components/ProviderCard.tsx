@@ -96,10 +96,10 @@ export default function ProviderCard({
   const handleEditClick = (p: Provider) => {
     resetModalState();
     setFormData({
-      id: p.id,
-      name: p.name,
-      baseUrl: p.baseUrl,
-      apiKey: p.apiKey,
+      id: p.id || "",
+      name: p.name || "",
+      baseUrl: p.baseUrl || "",
+      apiKey: p.apiKey || "",
       modelsString: (p.models || []).join(", "),
       concurrency: p.concurrency || 0,
         chatEndpoint: p.chatEndpoint || "",
@@ -150,9 +150,9 @@ export default function ProviderCard({
       }
       if (data.models && data.models.length > 0) {
         setAvailableRemoteModels(data.models);
-        const currentList = formData.modelsString
+        const currentList = (formData.modelsString || "")
           .split(",")
-          .map(m => m.trim())
+          .map(m => (m || "").trim())
           .filter(Boolean);
         const merged = Array.from(new Set([...currentList, ...data.models]));
         setFormData(prev => ({ ...prev, modelsString: merged.join(", ") }));
@@ -191,9 +191,9 @@ export default function ProviderCard({
     }
   };
 
-  const currentSelectedModels = formData.modelsString
+  const currentSelectedModels = (formData.modelsString || "")
     .split(",")
-    .map(m => m.trim())
+    .map(m => (m || "").trim())
     .filter(Boolean);
 
   const allKnownModels = Array.from(new Set([...currentSelectedModels, ...availableRemoteModels])).sort();
@@ -224,24 +224,23 @@ export default function ProviderCard({
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    const models = formData.modelsString
+    const models = (formData.modelsString || "")
       .split(",")
-      .map((m) => m.trim())
+      .map((m) => (m || "").trim())
       .filter((m) => m !== "");
 
-    const defaultModel = (formData.defaultModel.trim() && models.includes(formData.defaultModel.trim()))
-      ? formData.defaultModel.trim()
-      : undefined;
+    const dm = (formData.defaultModel || "").trim();
+    const defaultModel = (dm && models.includes(dm)) ? dm : undefined;
 
     const submissionData = {
-      id: formData.id.toLowerCase().trim(),
-      name: formData.name.trim(),
-      baseUrl: formData.baseUrl.trim(),
-      apiKey: formData.apiKey.trim(),
+      id: (formData.id || "").toLowerCase().trim(),
+      name: (formData.name || "").trim(),
+      baseUrl: (formData.baseUrl || "").trim(),
+      apiKey: (formData.apiKey || "").trim(),
       models,
       concurrency: formData.concurrency || 0,
-      chatEndpoint: formData.chatEndpoint.trim() || undefined,
-      responsesEndpoint: formData.responsesEndpoint.trim() || undefined,
+      chatEndpoint: (formData.chatEndpoint || "").trim() || undefined,
+      responsesEndpoint: (formData.responsesEndpoint || "").trim() || undefined,
       defaultModel,
       protocol: formData.protocol || undefined
     };
@@ -515,7 +514,7 @@ export default function ProviderCard({
                   onChange={(e) => setFormData({ ...formData, modelsString: e.target.value })}
                   className="w-full bg-neutral-50 border border-neutral-300 rounded-xl px-3.5 py-2 text-sm font-mono text-neutral-800 outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 focus:bg-white transition-colors"
                 />
-                {formData.modelsString.trim() !== "" && (
+                {(formData.modelsString || "").trim() !== "" && (
                   <button
                     type="button"
                     onClick={() => setFormData({ ...formData, modelsString: "", defaultModel: "" })}
