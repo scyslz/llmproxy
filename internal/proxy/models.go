@@ -324,71 +324,70 @@ func (a *App) HandleDirectResponses(w http.ResponseWriter, r *http.Request, prov
 	w.WriteHeader(resp.StatusCode)
 
 	stream := isStream(resp)
+	var parser UsageParser
+	var body bytes.Buffer
 	statusOut := resp.StatusCode
 	errMsg := ""
 	resModel := model
 	var prompt, completion, cached int
 
-	if !stream {
-		body, rerr := io.ReadAll(resp.Body)
-		if rerr != nil {
-			errMsg = "stream error: " + rerr.Error()
-			statusOut = 502
-		} else if len(body) > 0 {
-			var parsed struct {
-				Model string `json:"model"`
-				Usage *struct {
-					InputTokens        int `json:"input_tokens"`
-					OutputTokens       int `json:"output_tokens"`
-					TotalTokens        int `json:"total_tokens"`
-					InputTokensDetails *struct {
-						CachedTokens int `json:"cached_tokens"`
-					} `json:"input_tokens_details"`
-				} `json:"usage"`
+	buf := make([]byte, 32*1024)
+	for {
+		n, rerr := resp.Body.Read(buf)
+		if n > 0 {
+			body.Write(buf[:n])
+			if stream {
+				parser.Push(string(buf[:n]))
 			}
-			if json.Unmarshal(body, &parsed) == nil {
-				if parsed.Model != "" {
-					resModel = parsed.Model
-				}
-				if parsed.Usage != nil {
-					prompt = parsed.Usage.InputTokens
-					completion = parsed.Usage.OutputTokens
-					if parsed.Usage.InputTokensDetails != nil {
-						cached = parsed.Usage.InputTokensDetails.CachedTokens
-					}
-				}
-			}
-			if _, werr := w.Write(body); werr != nil {
+			if _, werr := w.Write(buf[:n]); werr != nil {
 				errMsg = "client closed connection"
 				statusOut = 499
+				break
+			}
+			if fl, ok := w.(http.Flusher); ok {
+				fl.Flush()
 			}
 		}
-	} else {
-		buf := make([]byte, 32*1024)
-		for {
-			n, rerr := resp.Body.Read(buf)
-			if n > 0 {
-				if _, werr := w.Write(buf[:n]); werr != nil {
-					errMsg = "client closed connection"
-					statusOut = 499
-					break
-				}
-				if fl, ok := w.(http.Flusher); ok {
-					fl.Flush()
-				}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			if r.Context().Err() == context.Canceled {
+				errMsg = "client closed connection"
+				statusOut = 499
+			} else {
+				errMsg = "stream error: " + rerr.Error()
+				statusOut = 502
 			}
-			if rerr == io.EOF {
-				break
+			break
+		}
+	}
+
+	if errMsg == "" {
+		if stream {
+			if parser.Model != "" {
+				resModel = parser.Model
 			}
-			if rerr != nil {
-				if r.Context().Err() == context.Canceled {
-					errMsg = "client closed connection"
-					statusOut = 499
-				} else {
-					errMsg = "stream error: " + rerr.Error()
-					statusOut = 502
+			if parser.Usage != nil {
+				prompt = parser.Usage.PromptTokens
+				completion = parser.Usage.CompletionTokens
+				cached = parser.Usage.CachedTokens
+			}
+		} else if body.Len() > 0 {
+			if usage, mm := parseUsageJSON(body.Bytes()); usage != nil {
+				if mm != "" {
+					resModel = mm
 				}
-				break
+				prompt = usage.PromptTokens
+				completion = usage.CompletionTokens
+				cached = usage.CachedTokens
+			} else {
+				var fallback struct {
+					Model string `json:"model"`
+				}
+				if json.Unmarshal(body.Bytes(), &fallback) == nil && fallback.Model != "" {
+					resModel = fallback.Model
+				}
 			}
 		}
 	}

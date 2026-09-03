@@ -71,7 +71,7 @@ type Usage struct {
 	CachedTokens     int `json:"cached_tokens"`
 }
 
-// Push 喂入一段文本。
+// Push 喂入一段文本，兼容 chat 与 responses 两种 usage 形态及流式嵌套结构。
 func (p *UsageParser) Push(text string) {
 	p.buf += text
 	for {
@@ -88,49 +88,73 @@ func (p *UsageParser) Push(text string) {
 		if data == "" || data == "[DONE]" {
 			continue
 		}
-		var obj struct {
-			Model string `json:"model"`
-			Usage *struct {
-				PromptTokens     int `json:"prompt_tokens"`
-				CompletionTokens int `json:"completion_tokens"`
-				CachedTokens     int `json:"cached_tokens"`
-				Details          *struct {
-					CachedTokens int `json:"cached_tokens"`
-				} `json:"prompt_tokens_details"`
-				CacheHitTokens int `json:"prompt_cache_hit_tokens"`
-				InputTokens    int `json:"input_tokens"`
-				OutputTokens   int `json:"output_tokens"`
-				InputDetails   *struct {
-					CachedTokens int `json:"cached_tokens"`
-				} `json:"input_tokens_details"`
-			} `json:"usage"`
-		}
-		if err := json.Unmarshal([]byte(data), &obj); err != nil {
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(data), &raw); err != nil {
 			continue
 		}
-		if obj.Model != "" {
-			p.Model = obj.Model
+		if v, ok := raw["model"]; ok {
+			var m string
+			if json.Unmarshal(v, &m) == nil && m != "" {
+				p.Model = m
+			}
 		}
-		if obj.Usage != nil {
-			pt := obj.Usage.PromptTokens
-			ct := obj.Usage.CompletionTokens
-			cached := 0
-			switch {
-			case obj.Usage.Details != nil && obj.Usage.Details.CachedTokens > 0:
-				cached = obj.Usage.Details.CachedTokens
-			case obj.Usage.CacheHitTokens > 0:
-				cached = obj.Usage.CacheHitTokens
-			case obj.Usage.CachedTokens > 0:
-				cached = obj.Usage.CachedTokens
-			case obj.Usage.InputDetails != nil && obj.Usage.InputDetails.CachedTokens > 0:
-				cached = obj.Usage.InputDetails.CachedTokens
+		var usageRaw json.RawMessage
+		if v, ok := raw["usage"]; ok {
+			usageRaw = v
+		} else if v, ok := raw["response"]; ok {
+			var resp struct {
+				Model string          `json:"model"`
+				Usage json.RawMessage `json:"usage"`
 			}
-			if pt == 0 && obj.Usage.InputTokens > 0 {
-				pt = obj.Usage.InputTokens
+			if json.Unmarshal(v, &resp) == nil {
+				if resp.Model != "" && p.Model == "" {
+					p.Model = resp.Model
+				}
+				if len(resp.Usage) > 0 {
+					usageRaw = resp.Usage
+				}
 			}
-			if ct == 0 && obj.Usage.OutputTokens > 0 {
-				ct = obj.Usage.OutputTokens
-			}
+		}
+		if len(usageRaw) == 0 {
+			continue
+		}
+		var u struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			CachedTokens     int `json:"cached_tokens"`
+			Details          *struct {
+				CachedTokens int `json:"cached_tokens"`
+			} `json:"prompt_tokens_details"`
+			CacheHitTokens int `json:"prompt_cache_hit_tokens"`
+			InputTokens    int `json:"input_tokens"`
+			OutputTokens   int `json:"output_tokens"`
+			InputDetails   *struct {
+				CachedTokens int `json:"cached_tokens"`
+			} `json:"input_tokens_details"`
+		}
+		if err := json.Unmarshal(usageRaw, &u); err != nil {
+			continue
+		}
+		pt := u.PromptTokens
+		ct := u.CompletionTokens
+		cached := 0
+		switch {
+		case u.Details != nil && u.Details.CachedTokens > 0:
+			cached = u.Details.CachedTokens
+		case u.CacheHitTokens > 0:
+			cached = u.CacheHitTokens
+		case u.CachedTokens > 0:
+			cached = u.CachedTokens
+		case u.InputDetails != nil && u.InputDetails.CachedTokens > 0:
+			cached = u.InputDetails.CachedTokens
+		}
+		if pt == 0 && u.InputTokens > 0 {
+			pt = u.InputTokens
+		}
+		if ct == 0 && u.OutputTokens > 0 {
+			ct = u.OutputTokens
+		}
+		if pt != 0 || ct != 0 || cached != 0 {
 			p.Usage = &Usage{PromptTokens: pt, CompletionTokens: ct, CachedTokens: cached}
 		}
 	}
