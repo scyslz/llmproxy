@@ -348,8 +348,8 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// 协议未确定时，仅当上游返回 404（端点不存在）才翻转到另一协议重试一次。
-		if probe && status == 404 {
+		// 协议未确定时，非200 均翻转到另一协议重试一次。
+		if probe && status != 200 {
 			flipped := protoChat
 			if target == protoChat {
 				flipped = protoResponses
