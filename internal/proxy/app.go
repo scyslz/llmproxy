@@ -348,8 +348,8 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// 协议未确定时，非200 均翻转到另一协议重试一次（用户要求：状态码非200都该翻转一次）。
-		if probe && status != 200 {
+		// 协议未确定时，仅当上游返回 404（端点不存在）才翻转到另一协议重试一次。
+		if probe && status == 404 {
 			flipped := protoChat
 			if target == protoChat {
 				flipped = protoResponses
@@ -754,7 +754,7 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, h *handlerC
 	a.logRequest(h, p.Name, resModel, statusOut, prompt, completion, cached, prompt+completion, stream, errMsg)
 }
 
-// parseUsageJSON 从非流式响应 JSON 提取 usage 与 model。
+// parseUsageJSON 从非流式响应 JSON 提取 usage 与 model，兼容 chat 与 responses 形态。
 func parseUsageJSON(data []byte) (*Usage, string) {
 	var obj struct {
 		Model string `json:"model"`
@@ -766,6 +766,11 @@ func parseUsageJSON(data []byte) (*Usage, string) {
 				CachedTokens int `json:"cached_tokens"`
 			} `json:"prompt_tokens_details"`
 			CacheHitTokens int `json:"prompt_cache_hit_tokens"`
+			InputTokens    int `json:"input_tokens"`
+			OutputTokens   int `json:"output_tokens"`
+			InputDetails   *struct {
+				CachedTokens int `json:"cached_tokens"`
+			} `json:"input_tokens_details"`
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(data, &obj); err != nil {
@@ -774,7 +779,15 @@ func parseUsageJSON(data []byte) (*Usage, string) {
 	if obj.Usage == nil {
 		return nil, obj.Model
 	}
-	u := &Usage{PromptTokens: obj.Usage.PromptTokens, CompletionTokens: obj.Usage.CompletionTokens}
+	pt := obj.Usage.PromptTokens
+	ct := obj.Usage.CompletionTokens
+	if pt == 0 && obj.Usage.InputTokens > 0 {
+		pt = obj.Usage.InputTokens
+	}
+	if ct == 0 && obj.Usage.OutputTokens > 0 {
+		ct = obj.Usage.OutputTokens
+	}
+	u := &Usage{PromptTokens: pt, CompletionTokens: ct}
 	switch {
 	case obj.Usage.Details != nil && obj.Usage.Details.CachedTokens > 0:
 		u.CachedTokens = obj.Usage.Details.CachedTokens
@@ -782,6 +795,8 @@ func parseUsageJSON(data []byte) (*Usage, string) {
 		u.CachedTokens = obj.Usage.CacheHitTokens
 	case obj.Usage.CachedTokens > 0:
 		u.CachedTokens = obj.Usage.CachedTokens
+	case obj.Usage.InputDetails != nil && obj.Usage.InputDetails.CachedTokens > 0:
+		u.CachedTokens = obj.Usage.InputDetails.CachedTokens
 	}
 	return u, obj.Model
 }

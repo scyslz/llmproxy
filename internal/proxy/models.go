@@ -176,8 +176,8 @@ func (a *App) HandleDirectChat(w http.ResponseWriter, r *http.Request, providerI
 		return
 	}
 
-	// 未确定协议时，若首次 chat 尝试非200，则翻转到 responses 重试一次
-	if probe && resp.StatusCode != 200 {
+	// 未确定协议时，若首次 chat 尝试 404（端点不存在），则翻转到 responses 重试一次
+	if probe && resp.StatusCode == 404 {
 		// 消费并关闭首次响应
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 64*1024))
 		resp.Body.Close()

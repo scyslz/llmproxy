@@ -98,6 +98,11 @@ func (p *UsageParser) Push(text string) {
 					CachedTokens int `json:"cached_tokens"`
 				} `json:"prompt_tokens_details"`
 				CacheHitTokens int `json:"prompt_cache_hit_tokens"`
+				InputTokens    int `json:"input_tokens"`
+				OutputTokens   int `json:"output_tokens"`
+				InputDetails   *struct {
+					CachedTokens int `json:"cached_tokens"`
+				} `json:"input_tokens_details"`
 			} `json:"usage"`
 		}
 		if err := json.Unmarshal([]byte(data), &obj); err != nil {
@@ -107,19 +112,26 @@ func (p *UsageParser) Push(text string) {
 			p.Model = obj.Model
 		}
 		if obj.Usage != nil {
-			u := &Usage{
-				PromptTokens:     obj.Usage.PromptTokens,
-				CompletionTokens: obj.Usage.CompletionTokens,
-			}
+			pt := obj.Usage.PromptTokens
+			ct := obj.Usage.CompletionTokens
+			cached := 0
 			switch {
 			case obj.Usage.Details != nil && obj.Usage.Details.CachedTokens > 0:
-				u.CachedTokens = obj.Usage.Details.CachedTokens
+				cached = obj.Usage.Details.CachedTokens
 			case obj.Usage.CacheHitTokens > 0:
-				u.CachedTokens = obj.Usage.CacheHitTokens
+				cached = obj.Usage.CacheHitTokens
 			case obj.Usage.CachedTokens > 0:
-				u.CachedTokens = obj.Usage.CachedTokens
+				cached = obj.Usage.CachedTokens
+			case obj.Usage.InputDetails != nil && obj.Usage.InputDetails.CachedTokens > 0:
+				cached = obj.Usage.InputDetails.CachedTokens
 			}
-			p.Usage = u
+			if pt == 0 && obj.Usage.InputTokens > 0 {
+				pt = obj.Usage.InputTokens
+			}
+			if ct == 0 && obj.Usage.OutputTokens > 0 {
+				ct = obj.Usage.OutputTokens
+			}
+			p.Usage = &Usage{PromptTokens: pt, CompletionTokens: ct, CachedTokens: cached}
 		}
 	}
 }
