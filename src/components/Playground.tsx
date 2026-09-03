@@ -2,15 +2,61 @@ import React, { useState, useEffect, useRef } from "react";
 import { Message, VirtualKey, Provider } from "../types";
 import { Send, Sparkles, AlertCircle, RefreshCw, Layers, Search, X } from "lucide-react";
 
+export type PlaygroundFormat = "chat" | "responses";
+
 interface PlaygroundProps {
   virtualKeys: VirtualKey[];
   providers: Provider[];
   activeProviderName: string;
   enableVirtualKey?: boolean;
-  onStateChange?: (key: string, model: string) => void;
+  format?: PlaygroundFormat;
+  onFormatChange?: (format: PlaygroundFormat) => void;
+  onStateChange?: (key: string, model: string, format: PlaygroundFormat) => void;
 }
 
-export default function Playground({ virtualKeys, providers, activeProviderName, enableVirtualKey, onStateChange }: PlaygroundProps) {
+// 从 responses 协议流式事件中提取文本增量。
+function extractResponsesDelta(parsed: any): string {
+  if (parsed && parsed.type === "response.output_text.delta" && typeof parsed.delta === "string") {
+    return parsed.delta;
+  }
+  return "";
+}
+
+// 从 responses 一次性响应（output 数组）提取文本。
+function extractResponsesText(result: any): string {
+  const output = Array.isArray(result?.output) ? result.output : [];
+  const parts: string[] = [];
+  for (const item of output) {
+    if (!item) continue;
+    if (Array.isArray(item.content)) {
+      for (const c of item.content) {
+        if (c && c.type === "output_text" && typeof c.text === "string") {
+          parts.push(c.text);
+        }
+      }
+    }
+    if (item.type === "output_text" && typeof item.text === "string") {
+      parts.push(item.text);
+    }
+  }
+  if (parts.length > 0) return parts.join("");
+  return JSON.stringify(result);
+}
+
+// 将对话历史映射为 responses 协议的 input 消息项。
+function toResponsesInput(messages: Message[]): any[] {
+  return messages.map((m) => ({
+    role: m.role === "user" ? "user" : "assistant",
+    content: [
+      {
+        type: m.role === "user" ? "input_text" : "output_text",
+        text: m.content
+      }
+    ]
+  }));
+}
+
+export default function Playground({ virtualKeys, providers, activeProviderName, enableVirtualKey, format: controlledFormat, onFormatChange, onStateChange }: PlaygroundProps) {
   const [messages, setMessages] = useState<Message[]>([
     { role: "system", content: "You are a helpful assistant talking through the LLM Proxy." }
   ]);
@@ -21,6 +67,12 @@ export default function Playground({ virtualKeys, providers, activeProviderName,
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [modelKeyword, setModelKeyword] = useState<string>("");
   const [stream, setStream] = useState(true);
+  const [internalFormat, setInternalFormat] = useState<PlaygroundFormat>("chat");
+  const format = controlledFormat !== undefined ? controlledFormat : internalFormat;
+  const setFormat = (next: PlaygroundFormat) => {
+    if (controlledFormat === undefined) setInternalFormat(next);
+    onFormatChange?.(next);
+  };
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -82,10 +134,10 @@ export default function Playground({ virtualKeys, providers, activeProviderName,
     fetchModels();
   }, [selectedKey, selectedProviderId, activeProviderName, providers, virtualKeys.length]);
 
-  // Report selected key/model up to App for the generated curl command
+  // Report selected key/model/format up to App for the generated curl command
   useEffect(() => {
-    onStateChange?.(selectedKey, selectedModel);
-  }, [selectedKey, selectedModel]);
+    onStateChange?.(selectedKey, selectedModel, format);
+  }, [selectedKey, selectedModel, format]);
 
   // Scroll to bottom on new messages
   useEffect(() => {
@@ -117,7 +169,6 @@ export default function Playground({ virtualKeys, providers, activeProviderName,
     setInput("");
     setIsLoading(true);
 
-    // Add placeholder assistant message
     const assistantMessageIdx = updatedMessages.length;
     setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
 
@@ -126,7 +177,6 @@ export default function Playground({ virtualKeys, providers, activeProviderName,
       const headers: Record<string, string> = {
         "Content-Type": "application/json"
       };
-      // Direct upstream test: apiKey is injected server-side from provider config
       if (!isDirectTest) {
         const activeKey = selectedKey;
         if (activeKey) {
@@ -134,13 +184,29 @@ export default function Playground({ virtualKeys, providers, activeProviderName,
         }
       }
 
-      const body = {
-        model: selectedModel || "default-model",
-        messages: updatedMessages.filter(m => m.role !== "system"), // strip system if needed, or keep
-        stream: stream
-      };
+      const conversation = updatedMessages.filter((m) => m.role !== "system");
+      let body: any;
+      if (format === "responses") {
+        body = {
+          model: selectedModel || "default-model",
+          input: toResponsesInput(conversation),
+          stream
+        };
+      } else {
+        body = {
+          model: selectedModel || "default-model",
+          messages: conversation,
+          stream
+        };
+      }
 
-      const endpoint = isDirectTest ? `/api/providers/${selectedProviderId}/chat/completions` : "/v1/chat/completions";
+      const endpoint = isDirectTest
+        ? format === "responses"
+          ? `/api/providers/${selectedProviderId}/responses`
+          : `/api/providers/${selectedProviderId}/chat/completions`
+        : format === "responses"
+          ? "/v1/responses"
+          : "/v1/chat/completions";
 
       const response = await fetch(endpoint, {
         method: "POST",
@@ -175,7 +241,6 @@ export default function Playground({ virtualKeys, providers, activeProviderName,
 
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split("\n");
-          // Keep the last incomplete line in buffer
           buffer = lines.pop() || "";
 
           for (const line of lines) {
@@ -187,7 +252,8 @@ export default function Playground({ virtualKeys, providers, activeProviderName,
               try {
                 const jsonStr = cleanLine.substring(6);
                 const parsed = JSON.parse(jsonStr);
-                const token = parsed.choices?.[0]?.delta?.content || "";
+                const token =
+                  format === "responses" ? extractResponsesDelta(parsed) : parsed.choices?.[0]?.delta?.content || "";
                 if (token) {
                   setMessages((prev) => {
                     const next = [...prev];
@@ -206,7 +272,7 @@ export default function Playground({ virtualKeys, providers, activeProviderName,
         }
       } else {
         const result = await response.json();
-        const content = result.choices?.[0]?.message?.content || JSON.stringify(result);
+        const content = format === "responses" ? extractResponsesText(result) : result.choices?.[0]?.message?.content || JSON.stringify(result);
         setMessages((prev) => {
           const next = [...prev];
           next[assistantMessageIdx] = { role: "assistant", content };
@@ -216,14 +282,13 @@ export default function Playground({ virtualKeys, providers, activeProviderName,
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Something went wrong during completions request.");
-      // Remove placeholder message
       setMessages((prev) => prev.slice(0, -1));
     } finally {
       setIsLoading(false);
     }
   };
 
-  const clearChat = () => {
+  const resetChat = () => {
     setMessages([{ role: "system", content: "You are a helpful assistant talking through the LLM Proxy." }]);
     setError(null);
   };
@@ -233,28 +298,46 @@ export default function Playground({ virtualKeys, providers, activeProviderName,
       {/* Playground Header - Mobile Optimized */}
       <div className="bg-neutral-50 px-4 sm:px-5 py-3.5 border-b border-neutral-200">
         {/* Top bar: Title and Stream Toggle */}
-        <div className="flex items-center justify-between pb-1">
-          <div className="flex items-center space-x-2">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-1">
+          <div className="flex items-center space-x-2 min-w-0">
             <Sparkles className="w-5 h-5 text-emerald-500 shrink-0" />
-            <h3 className="font-display font-semibold text-neutral-800 text-sm sm:text-base">Interactive Playground</h3>
+            <h3 className="font-display font-semibold text-neutral-800 text-sm sm:text-base truncate">Interactive Playground</h3>
           </div>
-          <div className="flex items-center space-x-3">
-            <label className="flex items-center space-x-1.5 cursor-pointer select-none text-neutral-600 bg-white border border-neutral-200 px-2.5 py-1 rounded-lg shadow-2xs hover:border-neutral-300 transition-colors">
-              <input
-                type="checkbox"
-                checked={stream}
-                onChange={(e) => setStream(e.target.checked)}
-                className="rounded border-neutral-300 text-emerald-600 focus:ring-emerald-500 w-3.5 h-3.5"
-              />
-              <span className="text-xs font-medium">Stream</span>
-            </label>
-            <button
-              onClick={fetchModels}
-              title="Refetch available models"
-              className="p-1.5 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-200 rounded-lg transition-colors border border-neutral-200 bg-white shadow-2xs"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-            </button>
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto justify-between sm:justify-end">
+            <div className="flex items-center bg-white border border-neutral-200 rounded-xl p-1 gap-1 shadow-2xs h-8">
+              <button
+                type="button"
+                onClick={() => setFormat("chat")}
+                className={`px-3 rounded-lg text-xs font-semibold transition-colors h-6 inline-flex items-center justify-center ${format === "chat" ? "bg-neutral-900 text-white shadow-xs" : "text-neutral-500 hover:text-neutral-800 hover:bg-neutral-50"}`}
+              >
+                Chat
+              </button>
+              <button
+                type="button"
+                onClick={() => setFormat("responses")}
+                className={`px-3 rounded-lg text-xs font-semibold transition-colors h-6 inline-flex items-center justify-center ${format === "responses" ? "bg-neutral-900 text-white shadow-xs" : "text-neutral-500 hover:text-neutral-800 hover:bg-neutral-50"}`}
+              >
+                Responses
+              </button>
+            </div>
+            <div className="flex items-center gap-2 ml-auto sm:ml-0">
+              <label className="flex items-center gap-1.5 cursor-pointer select-none text-neutral-600 bg-white border border-neutral-200 px-3 rounded-xl shadow-2xs hover:border-neutral-300 transition-colors h-8">
+                <input
+                  type="checkbox"
+                  checked={stream}
+                  onChange={(e) => setStream(e.target.checked)}
+                  className="rounded border-neutral-300 text-emerald-600 focus:ring-emerald-500 w-3.5 h-3.5"
+                />
+                <span className="text-xs font-medium">Stream</span>
+              </label>
+              <button
+                onClick={fetchModels}
+                title="Refetch available models"
+                className="h-8 w-8 inline-flex items-center justify-center text-neutral-500 hover:text-neutral-800 hover:bg-neutral-200 rounded-xl transition-colors border border-neutral-200 bg-white shadow-2xs shrink-0"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -406,10 +489,10 @@ export default function Playground({ virtualKeys, providers, activeProviderName,
       <form onSubmit={handleSend} className="p-4 border-t border-neutral-200 bg-white flex items-center space-x-2">
         <button
           type="button"
-          onClick={clearChat}
+          onClick={resetChat}
           className="px-3 py-2 text-xs text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 rounded-xl transition-colors font-medium border border-neutral-200"
         >
-          Clear Chat
+          Reset
         </button>
         <input
           type="text"

@@ -292,6 +292,170 @@ func (a *App) HandleDirectChat(w http.ResponseWriter, r *http.Request, providerI
 	a.logRequest(h, p.Name, resModel, statusOut, prompt, completion, cached, prompt+completion, stream, errMsg)
 }
 
+// HandleDirectResponses 处理 Playground 直连测试的 responses 格式
+// （POST /api/providers/:id/responses）。不经候选链 / virtual key 校验，
+// 将请求体按 responses 协议原样转发到 provider 的 responses 端点并回传结果；
+// provider 不支持 /responses 时也直接请求，不做 chat 兜底转换。
+func (a *App) HandleDirectResponses(w http.ResponseWriter, r *http.Request, providerID string) {
+	cfg := a.Cfg.Get()
+	reqID := ShortID()
+	logDetail := orDefault(cfg.LogDetail, "basic")
+
+	var p *Provider
+	for i := range cfg.Providers {
+		if cfg.Providers[i].ID == providerID {
+			pp := cfg.Providers[i]
+			p = ProviderFromDomain(&pp)
+			break
+		}
+	}
+	if p == nil {
+		writeJSON(w, 404, map[string]string{"error": "Provider not found"})
+		return
+	}
+
+	directLog := func(level, msg string) {
+		if logDetail != "off" {
+			a.Logger.Log(level, msg, "proxy", reqID)
+		}
+	}
+	start := time.Now()
+	h := &handlerCtx{
+		start:     start,
+		origPath:  r.URL.Path,
+		method:    r.Method,
+		requestID: reqID,
+		logDetail: logDetail,
+	}
+	directLog("info", "[Provider Test] "+p.Name+" responses initiated")
+
+	rawBody, err := io.ReadAll(r.Body)
+	r.Body.Close()
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	model := ""
+	var reqMeta struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(rawBody, &reqMeta); err == nil {
+		model = reqMeta.Model
+	}
+
+	sendURL := buildTargetURL(p, protoResponses)
+
+	hdr := http.Header{}
+	hdr.Set("Content-Type", "application/json")
+	if p.APIKey != "" {
+		hdr.Set("Authorization", "Bearer "+p.APIKey)
+	}
+	if logDetail == "all" {
+		a.Logger.Log(logging.LevelInfo, "[Provider Test Request Headers] "+formatHeaders(hdr), "proxy", reqID)
+	}
+
+	resp, err := a.Client.Do(r.Context(), "POST", sendURL, hdr, bytes.NewReader(rawBody), p.Timeout)
+	if err != nil {
+		directLog("error", "[Provider Test] "+p.Name+" failed: "+err.Error())
+		a.logRequest(h, p.Name, model, 502, 0, 0, 0, 0, false, "connection error: "+err.Error())
+		writeJSON(w, 502, map[string]string{"error": "Provider test failed: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+
+	if h.detailActiveFor(resp.StatusCode) {
+		if logDetail == "error" {
+			a.Logger.Log(logging.LevelInfo, "[Provider Test Request Headers] "+formatHeaders(hdr), "proxy", reqID)
+		}
+		a.Logger.Log(logging.LevelInfo, "[Provider Test Response Headers] "+formatHeaders(resp.Header), "proxy", reqID)
+	}
+
+	for k, vv := range resp.Header {
+		lk := strings.ToLower(k)
+		if lk == "transfer-encoding" || lk == "content-encoding" || lk == "content-length" {
+			continue
+		}
+		for _, v := range vv {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+
+	stream := isStream(resp)
+	statusOut := resp.StatusCode
+	errMsg := ""
+	resModel := model
+	var prompt, completion, cached int
+
+	if !stream {
+		body, rerr := io.ReadAll(resp.Body)
+		if rerr != nil {
+			errMsg = "stream error: " + rerr.Error()
+			statusOut = 502
+		} else if len(body) > 0 {
+			var parsed struct {
+				Model string `json:"model"`
+				Usage *struct {
+					InputTokens        int `json:"input_tokens"`
+					OutputTokens       int `json:"output_tokens"`
+					TotalTokens        int `json:"total_tokens"`
+					InputTokensDetails *struct {
+						CachedTokens int `json:"cached_tokens"`
+					} `json:"input_tokens_details"`
+				} `json:"usage"`
+			}
+			if json.Unmarshal(body, &parsed) == nil {
+				if parsed.Model != "" {
+					resModel = parsed.Model
+				}
+				if parsed.Usage != nil {
+					prompt = parsed.Usage.InputTokens
+					completion = parsed.Usage.OutputTokens
+					if parsed.Usage.InputTokensDetails != nil {
+						cached = parsed.Usage.InputTokensDetails.CachedTokens
+					}
+				}
+			}
+			if _, werr := w.Write(body); werr != nil {
+				errMsg = "client closed connection"
+				statusOut = 499
+			}
+		}
+	} else {
+		buf := make([]byte, 32*1024)
+		for {
+			n, rerr := resp.Body.Read(buf)
+			if n > 0 {
+				if _, werr := w.Write(buf[:n]); werr != nil {
+					errMsg = "client closed connection"
+					statusOut = 499
+					break
+				}
+				if fl, ok := w.(http.Flusher); ok {
+					fl.Flush()
+				}
+			}
+			if rerr == io.EOF {
+				break
+			}
+			if rerr != nil {
+				if r.Context().Err() == context.Canceled {
+					errMsg = "client closed connection"
+					statusOut = 499
+				} else {
+					errMsg = "stream error: " + rerr.Error()
+					statusOut = 502
+				}
+				break
+			}
+		}
+	}
+
+	directLog("info", "[Provider Test] "+p.Name+" responses completed with status "+itoa(statusOut)+" ("+spanMs(start)+")")
+	a.logRequest(h, p.Name, resModel, statusOut, prompt, completion, cached, prompt+completion, stream, errMsg)
+}
+
 // FetchRemoteModels 拉取 provider 的远程模型列表。
 func (a *App) FetchRemoteModels(w http.ResponseWriter, r *http.Request) {
 	var body struct {

@@ -60,6 +60,9 @@ func Run(cfg *config.Manager, sysStore *logstore.SystemStore, reqStore *logstore
 			case "chat":
 				proxyApp.HandleDirectChat(w, r, id)
 				return
+			case "responses":
+				proxyApp.HandleDirectResponses(w, r, id)
+				return
 			}
 		}
 		// 处理 /api/providers/fetch-remote-models

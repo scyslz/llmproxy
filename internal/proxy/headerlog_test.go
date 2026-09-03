@@ -248,3 +248,83 @@ func TestHandleDirectChatNon2xxLogsHeaders(t *testing.T) {
 		t.Fatalf("request logs = %+v, want one 401 entry", reqLogs)
 	}
 }
+
+// TestHandleDirectResponsesLogsRequest: Playground responses 直连应命中 /responses，
+// 原样透传上游响应并解析 usage 写入请求日志。
+func TestHandleDirectResponsesLogsRequest(t *testing.T) {
+	upstreamPath := ""
+	okSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"resp_1","model":"r2","object":"response","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}],"usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10,"input_tokens_details":{"cached_tokens":2}}}`))
+	}))
+	defer okSrv.Close()
+
+	tmp := t.TempDir()
+	cm, err := config.New(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &domain.Config{
+		Listen:    ":0",
+		LogDetail: "basic",
+		Providers: []domain.Provider{
+			{ID: "ok", Name: "Ok P", BaseURL: okSrv.URL, APIKey: "k", Enabled: true, Models: []string{"m"}, DefaultModel: "m", Timeout: 2000},
+		},
+	}
+	if err := cm.Replace(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	reqStore, err := logstore.OpenRequest(tmp+"/requests.db", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reqStore.Close()
+	sysStore, err := logstore.OpenSystem(tmp + "/system.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sysStore.Close()
+
+	a := &App{
+		Cfg:     cm,
+		Breaker: circuit.NewBreaker(),
+		Client:  NewClient(),
+		Logger:  logging.New(cm, sysStore),
+		ReqLog:  reqStore,
+	}
+
+	body := `{"model":"r1","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}],"stream":false}`
+	req := httptest.NewRequest("POST", "/api/providers/ok/responses", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	a.HandleDirectResponses(rec, req, "ok")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `"output_text"`) {
+		t.Fatalf("body not passed through: %s", rec.Body.String())
+	}
+	if upstreamPath != "/v1/responses" {
+		t.Fatalf("upstream path = %q, want /v1/responses", upstreamPath)
+	}
+
+	logs, err := reqStore.Query(logstore.QueryFilter{}, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("request logs = %d, want 1", len(logs))
+	}
+	l := logs[0]
+	if l.Provider != "Ok P" || l.Status != 200 {
+		t.Fatalf("provider/status = %q/%d, want Ok P/200", l.Provider, l.Status)
+	}
+	if l.Model != "r2" {
+		t.Fatalf("model = %q, want r2", l.Model)
+	}
+	if l.PromptTokens != 7 || l.CompletionToks != 3 || l.CachedTokens != 2 {
+		t.Fatalf("usage wrong: prompt=%d completion=%d cached=%d", l.PromptTokens, l.CompletionToks, l.CachedTokens)
+	}
+}

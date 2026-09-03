@@ -32,6 +32,7 @@ export default function App() {
   const [isPollingLogs, setIsPollingLogs] = useState(true);
   const [playgroundKey, setPlaygroundKey] = useState("");
   const [playgroundModel, setPlaygroundModel] = useState("");
+  const [playgroundFormat, setPlaygroundFormat] = useState<"chat" | "responses">("chat");
   const [groupTestResults, setGroupTestResults] = useState<GroupTestEntry[] | null>(null);
   const [isTestingGroup, setIsTestingGroup] = useState(false);
   const lastLogIdRef = useRef(0);
@@ -288,9 +289,10 @@ export default function App() {
 
   const activeProviderName = providers.find((p) => p.enabled)?.name || "No Active Router";
 
-  // Generated curl command reflects the playground selections; the proxy path is always /v1/chat/completions
+  // Generated curl command reflects the playground selections (including chat / responses format);
+  // the proxy path varies: /v1/chat/completions for chat, /v1/responses for responses.
   const proxyOrigin = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
-  const curlEndpoint = `${proxyOrigin}/v1/chat/completions`;
+  const curlEndpoint = `${proxyOrigin}${playgroundFormat === "responses" ? "/v1/responses" : "/v1/chat/completions"}`;
   const curlKey = enableVirtualKey ? (playgroundKey || "YOUR_VIRTUAL_KEY") : "ANY_KEY";
   const curlModel = playgroundModel || "any-supported-model";
 
@@ -349,10 +351,10 @@ export default function App() {
           {activeTab === "providers" && (
             <motion.div
               key="providers"
-              initial={{ opacity: 0, y: 15 }}
+              initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
-              transition={{ duration: 0.15 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.22, ease: "easeOut" }}
             >
               <ProviderCard
                 providers={providers}
@@ -367,10 +369,10 @@ export default function App() {
           {activeTab === "groups" && (
             <motion.div
               key="groups"
-              initial={{ opacity: 0, y: 15 }}
+              initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
-              transition={{ duration: 0.15 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.22, ease: "easeOut" }}
             >
               <GroupCard
                 groups={groups}
@@ -412,10 +414,10 @@ export default function App() {
           {activeTab === "keys" && (
             <motion.div
               key="keys"
-              initial={{ opacity: 0, y: 15 }}
+              initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
-              transition={{ duration: 0.15 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.22, ease: "easeOut" }}
             >
               <KeyManager
                 keys={virtualKeys}
@@ -430,59 +432,13 @@ export default function App() {
             </motion.div>
           )}
 
-          {activeTab === "playground" && (
-            <motion.div
-              key="playground"
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
-              transition={{ duration: 0.15 }}
-              className="space-y-6"
-            >
-              <div>
-                <h3 className="font-display font-semibold text-neutral-800 text-base">API Playground</h3>
-                <p className="text-xs text-neutral-500">Test completions and stream tokens directly through your proxy</p>
-              </div>
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-                <div className="lg:col-span-2">
-                  <Playground virtualKeys={virtualKeys} providers={providers} activeProviderName={activeProviderName} enableVirtualKey={enableVirtualKey} onStateChange={(key, model) => { setPlaygroundKey(key); setPlaygroundModel(model); }} />
-                </div>
-                <div className="bg-white border border-neutral-200 rounded-2xl p-5 shadow-sm space-y-3.5">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-600 flex items-center space-x-1.5">
-                    <Terminal className="w-4 h-4 text-neutral-500" />
-                    <span>Integration Code Snippet</span>
-                  </h4>
-                  <p className="text-xs text-neutral-500 leading-relaxed">
-                    This proxy is fully OpenAI-compatible. You can switch any client SDK endpoint to this service URL.
-                  </p>
-                  <div className="bg-slate-50 p-4 rounded-xl font-mono text-[11px] text-slate-800 space-y-2 overflow-x-auto border border-slate-200 select-all">
-                    <div className="text-slate-400">// Shell/Curl integration example</div>
-                    <div>
-                      curl <span className="text-neutral-900 font-semibold">{curlEndpoint}</span> \
-                    </div>
-                    <div className="pl-2">
-                      -H <span className="text-amber-700">"Authorization: Bearer {curlKey}"</span> \
-                    </div>
-                    <div className="pl-2">
-                      -H <span className="text-amber-700">"Content-Type: application/json"</span> \
-                    </div>
-                    <div className="pl-2">-d '{"{"}</div>
-                    <div className="pl-4">"model": "{curlModel}",</div>
-                    <div className="pl-4">"messages": [{"{"}"role": "user", "content": "Hello!"{"}"}]</div>
-                    <div className="pl-2">{"}"}'</div>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          )}
-
           {activeTab === "logs" && (
             <motion.div
               key="logs"
-              initial={{ opacity: 0, y: 15 }}
+              initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
-              transition={{ duration: 0.15 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.22, ease: "easeOut" }}
               className="space-y-6"
             >
               <div>
@@ -505,10 +461,10 @@ export default function App() {
           {activeTab === "requestlogs" && (
             <motion.div
               key="requestlogs"
-              initial={{ opacity: 0, y: 15 }}
+              initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
-              transition={{ duration: 0.15 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.22, ease: "easeOut" }}
               className="space-y-6"
             >
               <div>
@@ -529,10 +485,10 @@ export default function App() {
           {activeTab === "settings" && (
             <motion.div
               key="settings"
-              initial={{ opacity: 0, y: 15 }}
+              initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
-              transition={{ duration: 0.15 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.22, ease: "easeOut" }}
             >
               <SecuritySettings
                 enableVirtualKey={enableVirtualKey}
@@ -544,6 +500,75 @@ export default function App() {
             </motion.div>
           )}
         </AnimatePresence>
+        {/* Playground is always-mounted (hidden when inactive) so that requests, streaming, and
+            conversation context survive tab switches; only explicit "Reset" resets it. */}
+        <div className={activeTab === "playground" ? "space-y-6" : "hidden"}>
+          <motion.div
+            key="playground-inner"
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.22, ease: "easeOut" }}
+          >
+          <div>
+            <h3 className="font-display font-semibold text-neutral-800 text-base">API Playground</h3>
+            <p className="text-xs text-neutral-500">Test completions and stream tokens directly through your proxy</p>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+            <div className="lg:col-span-2">
+              <Playground
+                virtualKeys={virtualKeys}
+                providers={providers}
+                activeProviderName={activeProviderName}
+                enableVirtualKey={enableVirtualKey}
+                format={playgroundFormat}
+                onFormatChange={setPlaygroundFormat}
+                onStateChange={(key, model, fmt) => {
+                  setPlaygroundKey(key);
+                  setPlaygroundModel(model);
+                  setPlaygroundFormat(fmt);
+                }}
+              />
+            </div>
+            <div className="bg-white border border-neutral-200 rounded-2xl p-5 shadow-sm space-y-3.5">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-600 flex items-center space-x-1.5">
+                <Terminal className="w-4 h-4 text-neutral-500" />
+                <span>Integration Code Snippet</span>
+              </h4>
+              <p className="text-xs text-neutral-500 leading-relaxed">
+                This proxy is fully OpenAI-compatible. You can switch any client SDK endpoint to this service URL.
+              </p>
+              <div className="bg-slate-50 p-4 rounded-xl font-mono text-[11px] text-slate-800 space-y-2 overflow-x-auto border border-slate-200 select-all">
+                <div className="text-slate-400">// Shell/Curl integration example</div>
+                <div>
+                  curl <span className="text-neutral-900 font-semibold">{curlEndpoint}</span> \
+                </div>
+                <div className="pl-2">
+                  -H <span className="text-amber-700">"Authorization: Bearer {curlKey}"</span> \
+                </div>
+                <div className="pl-2">
+                  -H <span className="text-amber-700">"Content-Type: application/json"</span> \
+                </div>
+                {playgroundFormat === "responses" ? (
+                  <>
+                    <div className="pl-2">-d '{"{"}</div>
+                    <div className="pl-4">"model": "{curlModel}",</div>
+                    <div className="pl-4">"input": [{"{"}"role": "user", "content": [{"{"}"type": "input_text", "text": "Hello!"{"}"}]{"}"}],</div>
+                    <div className="pl-4">"stream": true</div>
+                    <div className="pl-2">{"}"}'</div>
+                  </>
+                ) : (
+                  <>
+                    <div className="pl-2">-d '{"{"}</div>
+                    <div className="pl-4">"model": "{curlModel}",</div>
+                    <div className="pl-4">"messages": [{"{"}"role": "user", "content": "Hello!"{"}"}]</div>
+                    <div className="pl-2">{"}"}'</div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+          </motion.div>
+        </div>
       </main>
     </div>
   );
