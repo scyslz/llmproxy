@@ -37,22 +37,22 @@ func NewApp(cfg *config.Manager, br *circuit.Breaker, cl *Client,
 
 // handlerCtx 携带单次转发所需上下文。
 type handlerCtx struct {
-	start        time.Time
-	origPath     string
-	method       string
-	requestID    string
-	cfg          *domain.Config
-	logDetail    string
-	logBody      bool
-	apiKey       string
-	keyName      string
-	reqModel     string
-		degradedFrom []string
-		timedOut     bool
-		lastStatus   int
-		lastProvider string
-		failureLogged bool
-	}
+	start         time.Time
+	origPath      string
+	method        string
+	requestID     string
+	cfg           *domain.Config
+	logDetail     string
+	logBody       bool
+	apiKey        string
+	keyName       string
+	reqModel      string
+	degradedFrom  []string
+	timedOut      bool
+	lastStatus    int
+	lastProvider  string
+	failureLogged bool
+}
 
 func (h *handlerCtx) proxyLog(a *App, level, msg string) {
 	if h.logDetail != "off" {
@@ -74,18 +74,18 @@ func enabledCandidates(ps []domain.Provider) []*Provider {
 
 func ProviderFromDomain(p *domain.Provider) *Provider {
 	return &Provider{
-		ID:        p.ID,
-		Name:      p.Name,
-		BaseURL:   p.BaseURL,
-		APIKey:    p.APIKey,
-		Models:    p.Models,
+		ID:                p.ID,
+		Name:              p.Name,
+		BaseURL:           p.BaseURL,
+		APIKey:            p.APIKey,
+		Models:            p.Models,
 		ChatEndpoint:      p.ChatEndpoint,
 		ResponsesEndpoint: p.ResponsesEndpoint,
-		DefaultModel:   p.DefaultModel,
-		Protocol:       p.Protocol,
-		ModelProtocols: p.ModelProtocols,
-		Timeout:   time.Duration(p.Timeout) * time.Millisecond,
-		Concurrency: p.Concurrency,
+		DefaultModel:      p.DefaultModel,
+		Protocol:          p.Protocol,
+		ModelProtocols:    p.ModelProtocols,
+		Timeout:           time.Duration(p.Timeout) * time.Millisecond,
+		Concurrency:       p.Concurrency,
 	}
 }
 
@@ -101,25 +101,25 @@ func (a *App) selectCandidates(cfg *domain.Config, apiKey string, keyName *strin
 				}
 				vk := &cfg.Keys[i]
 				if vk.GroupID != "" {
-				if group := findGroup(cfg, vk.GroupID); group != nil {
-					cands := []*Provider{}
-					for _, e := range group.Entries {
-						for j := range cfg.Providers {
-							if cfg.Providers[j].ID == e.ProviderID {
-								pp := cfg.Providers[j]
-								p := ProviderFromDomain(&pp)
-								if len(e.Models) > 0 {
-									p.DefaultModel = e.Models[0]
+					if group := findGroup(cfg, vk.GroupID); group != nil {
+						cands := []*Provider{}
+						for _, e := range group.Entries {
+							for j := range cfg.Providers {
+								if cfg.Providers[j].ID == e.ProviderID {
+									pp := cfg.Providers[j]
+									p := ProviderFromDomain(&pp)
+									if len(e.Models) > 0 {
+										p.DefaultModel = e.Models[0]
+									}
+									cands = append(cands, p)
+									break
 								}
-								cands = append(cands, p)
-								break
 							}
 						}
+						return cands, true, true
 					}
-					return cands, true, true
+					// groupId references nonexistent group -> fall through to providerIds
 				}
-				// groupId references nonexistent group -> fall through to providerIds
-			}
 				if len(vk.ProviderIDs) > 0 {
 					isAll := false
 					for _, id := range vk.ProviderIDs {
@@ -161,6 +161,198 @@ func findGroup(cfg *domain.Config, id string) *domain.ProviderGroup {
 // sem 返回 provider 维度的全局信号量（registry 跨配置变更保留）。
 func (a *App) Sem(providerID string, concurrency int) *Semaphore {
 	return globalSemaphore(providerID, concurrency)
+}
+
+// AttemptResult 是对单个 provider 一次转发（含协议探测）的结果。
+type AttemptResult struct {
+	Resp             *http.Response
+	Cancel           context.CancelFunc
+	Aborted          bool
+	Reason           string
+	Status           int
+	TimeoutErr       bool
+	Inbound          string
+	Target           string
+	CandModel        string
+	ConversionFailed bool
+}
+
+// attemptProvider 对单个 provider 执行模型替换、协议转换、转发与协议翻转探测。
+func (a *App) attemptProvider(h *handlerCtx, p *Provider, reqBody map[string]interface{}, origModel string, clientCtx context.Context) AttemptResult {
+	candBody := reqBody
+	candModel := origModel
+	if (h.method == "POST" || h.method == "PUT") && candModel != "" {
+		if !containsStr(p.Models, candModel) && len(p.Models) > 0 {
+			fallback := orDefault(p.DefaultModel, p.Models[0])
+			if h.logDetail == "all" {
+				h.proxyLog(a, logging.LevelWarn, "[API Proxy] Model '"+candModel+"' not supported by provider '"+p.Name+"'. Substituting with fallback '"+fallback+"'.")
+			}
+			cb := make(map[string]interface{}, len(candBody)+1)
+			for k, v := range candBody {
+				cb[k] = v
+			}
+			cb["model"] = fallback
+			candBody = cb
+			candModel = fallback
+		}
+	}
+	h.reqModel = candModel
+
+	inbound := inboundProtocol(h.origPath)
+	target, known := p.upstreamProtocol(candModel)
+	probe := false
+	if !known {
+		target = inbound
+		probe = true
+	}
+
+	attemptBody := candBody
+	if inbound != target {
+		convBody, cerr := convertRequestBody(inbound, target, candBody)
+		if cerr != nil {
+			h.proxyLog(a, logging.LevelError, "[API Proxy] request conversion failed: "+cerr.Error())
+			a.logRequest(h, p.Name, candModel, 400, 0, 0, 0, 0, false, cerr.Error())
+			h.proxyLog(a, logging.LevelWarn, "[API Proxy Degrade] "+p.Name+" failed: conversion error, trying next provider")
+			return AttemptResult{Reason: cerr.Error(), Status: 400, Inbound: inbound, Target: target, CandModel: candModel, ConversionFailed: true}
+		}
+		attemptBody = convBody
+	}
+
+	targetURL := buildTargetURL(p, target)
+	sub := targetSubPath(target)
+	cfgPath := p.ChatEndpoint
+	if target == protoResponses {
+		cfgPath = p.ResponsesEndpoint
+	}
+	realPath := cfgPath
+	if realPath == "" {
+		realPath = sub
+	}
+	h.proxyLog(a, logging.LevelInfo, "[API Proxy Forward] "+h.method+" "+h.origPath+" -> "+p.Name+
+		" ("+orDefault(candModel, "default")+")"+
+		ifAny(h.keyName != "", " [Key: "+h.keyName+"]", "")+
+		ifAny(inbound != target, " [convert "+inbound+"->"+target+"]", "")+
+		" [=> "+realPath+"]")
+	if h.logDetail == "all" {
+		h.proxyLog(a, logging.LevelInfo, "[API Proxy Request URL] "+h.method+" "+targetURL)
+	}
+	if h.logBody && h.detailActiveFor(500) && (h.method == "POST" || h.method == "PUT") && attemptBody != nil {
+		if b, err := json.Marshal(attemptBody); err == nil {
+			h.proxyLog(a, logging.LevelInfo, "[API Proxy Request Body] "+string(b))
+		}
+	}
+
+	sem := a.Sem(p.ID, p.Concurrency)
+	res, cancelFn, aborted, reason, status, timeoutErr := a.forwardOnce(h, p, attemptBody, targetURL, clientCtx, sem)
+	if aborted {
+		return AttemptResult{Aborted: true, Inbound: inbound, Target: target, CandModel: candModel}
+	}
+	if res != nil {
+		return AttemptResult{Resp: res, Cancel: cancelFn, Status: status, Inbound: inbound, Target: target, CandModel: candModel}
+	}
+
+	if probe && status != 200 {
+		flipped := protoChat
+		if target == protoChat {
+			flipped = protoResponses
+		}
+		convBody, cerr := convertRequestBody(inbound, flipped, candBody)
+		if cerr == nil {
+			probeURL := buildTargetURL(p, flipped)
+			probeRealPath := p.ChatEndpoint
+			if flipped == protoResponses {
+				probeRealPath = p.ResponsesEndpoint
+			}
+			if probeRealPath == "" {
+				probeRealPath = targetSubPath(flipped)
+			}
+			h.proxyLog(a, logging.LevelInfo, "[API Proxy Forward] "+h.method+" "+h.origPath+" -> "+p.Name+
+				" ("+orDefault(candModel, "default")+")"+
+				ifAny(h.keyName != "", " [Key: "+h.keyName+"]", "")+
+				ifAny(inbound != flipped, " [convert "+inbound+"->"+flipped+"]", "")+
+				" [=> "+probeRealPath+"]")
+			if h.logDetail == "all" {
+				h.proxyLog(a, logging.LevelInfo, "[API Proxy Request URL] "+h.method+" "+probeURL)
+			}
+			if h.logBody && h.detailActiveFor(500) && (h.method == "POST" || h.method == "PUT") && convBody != nil {
+				if b, err := json.Marshal(convBody); err == nil {
+					h.proxyLog(a, logging.LevelInfo, "[API Proxy Request Body] "+string(b))
+				}
+			}
+			res2, cancel2, ab2, rs2, st2, te2 := a.forwardOnce(h, p, convBody, probeURL, clientCtx, sem)
+			if ab2 {
+				return AttemptResult{Aborted: true, Inbound: inbound, Target: flipped, CandModel: candModel}
+			}
+			if res2 != nil {
+				a.persistDiscoveredProtocol(p.ID, candModel, flipped)
+				h.proxyLog(a, logging.LevelInfo, "[API Proxy] protocol probe succeeded by flipping to '"+flipped+"' ("+p.Name+"/"+candModel+") [=> "+probeRealPath+"]")
+				return AttemptResult{Resp: res2, Cancel: cancel2, Status: st2, Inbound: inbound, Target: flipped, CandModel: candModel}
+			}
+			status = st2
+			timeoutErr = te2
+			reason = rs2
+			target = flipped
+		}
+	}
+
+	return AttemptResult{Reason: reason, Status: status, TimeoutErr: timeoutErr, Inbound: inbound, Target: target, CandModel: candModel}
+}
+
+// ProbeChat 用与 HandleProxy 相同的转发/协议探测路径探测单个 provider+model，并写入代理日志。
+func (a *App) ProbeChat(ctx context.Context, p *Provider, model string, fromGroup bool) (ok bool, status int, durationMS int64, errMsg string) {
+	start := time.Now()
+	cfg := a.Cfg.Get()
+	h := &handlerCtx{
+		start:     start,
+		origPath:  "/v1/chat/completions",
+		method:    "POST",
+		requestID: ShortID(),
+		cfg:       cfg,
+		logDetail: orDefault(cfg.LogDetail, "basic"),
+		logBody:   cfg.LogBody,
+		keyName:   "group-test",
+		reqModel:  model,
+	}
+	h.proxyLog(a, logging.LevelInfo, "[API Proxy] POST /v1/chat/completions initiated (group test)")
+	body := map[string]interface{}{
+		"model":      model,
+		"messages":   []map[string]string{{"role": "user", "content": "hi"}},
+		"max_tokens": 1,
+	}
+	out := a.attemptProvider(h, p, body, model, ctx)
+	dur := time.Since(start).Milliseconds()
+	if out.Aborted {
+		h.proxyLog(a, logging.LevelWarn, "[API Proxy Aborted] Client closed connection ("+spanMs(h.start)+")")
+		a.logRequest(h, p.Name, h.reqModel, 499, 0, 0, 0, 0, false, "client closed connection")
+		return false, 499, dur, "client closed connection"
+	}
+	if out.Resp != nil {
+		io.Copy(io.Discard, out.Resp.Body)
+		out.Resp.Body.Close()
+		if out.Cancel != nil {
+			out.Cancel()
+		}
+		a.Breaker.RecordSuccess(p.ID)
+		if fromGroup && a.Health != nil {
+			a.Health.RecordSuccess(p.ID, out.CandModel)
+		}
+		h.proxyLog(a, logging.LevelInfo, "[API Proxy Complete] Status "+itoa(out.Status)+" ("+spanMs(h.start)+") -> "+p.Name)
+		a.logRequest(h, p.Name, out.CandModel, out.Status, 0, 0, 0, 0, false, "")
+		return true, out.Status, dur, ""
+	}
+	if out.ConversionFailed {
+		return false, out.Status, dur, out.Reason
+	}
+	a.Breaker.RecordFailure(p.ID)
+	if fromGroup && a.Health != nil {
+		a.Health.RecordFailure(p.ID, out.CandModel)
+	}
+	if out.TimeoutErr {
+		h.timedOut = true
+	}
+	a.logRequest(h, p.Name, out.CandModel, out.Status, 0, 0, 0, 0, false, out.Reason)
+	h.proxyLog(a, logging.LevelWarn, "[API Proxy Degrade] "+p.Name+" failed: "+out.Reason)
+	return false, out.Status, dur, out.Reason
 }
 
 // HandleProxy 处理 /v1/* 的通用转发（候选链降级 + 熔断 + 流式回传）。
@@ -257,167 +449,48 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// 模型校验与替换（仅 POST/PUT 且有 model），每轮基于用户原始请求模型重新判断
-		candBody := reqBody
-		candModel := origModel
-		if (h.method == "POST" || h.method == "PUT") && candModel != "" {
-			if !containsStr(p.Models, candModel) && len(p.Models) > 0 {
-				fallback := orDefault(p.DefaultModel, p.Models[0])
-				if h.logDetail == "all" {
-					h.proxyLog(a, logging.LevelWarn, "[API Proxy] Model '"+candModel+"' not supported by provider '"+p.Name+"'. Substituting with fallback '"+fallback+"'.")
-				}
-				cb := make(map[string]interface{}, len(candBody)+1)
-				for k, v := range candBody {
-					cb[k] = v
-				}
-				cb["model"] = fallback
-				candBody = cb
-				candModel = fallback
-			}
-		}
-		h.reqModel = candModel
-
-		inbound := inboundProtocol(h.origPath)
-		target, known := p.upstreamProtocol(candModel)
-		probe := false
-		if !known {
-			target = inbound // 协议未知，先按入站原生协议尝试，404 再探测
-			probe = true
-		}
-
-		attemptBody := candBody
-		if inbound != target {
-			convBody, cerr := convertRequestBody(inbound, target, candBody)
-			if cerr != nil {
-				h.proxyLog(a, logging.LevelError, "[API Proxy] request conversion failed: "+cerr.Error())
-				h.degradedFrom = append(h.degradedFrom, p.Name+" (conversion error)")
-				h.lastStatus = 400
-				h.lastProvider = p.Name
-				h.failureLogged = true
-				a.logRequest(h, p.Name, candModel, 400, 0, 0, 0, 0, false, cerr.Error())
-				h.proxyLog(a, logging.LevelWarn, "[API Proxy Degrade] "+p.Name+" failed: conversion error, trying next provider")
-				continue
-			}
-			attemptBody = convBody
-		}
-
-		targetURL := buildTargetURL(p, target)
-		sub := targetSubPath(target)
-		cfgPath := p.ChatEndpoint
-		if target == protoResponses {
-			cfgPath = p.ResponsesEndpoint
-		}
-		realPath := cfgPath
-		if realPath == "" {
-			realPath = sub
-		}
-		h.proxyLog(a, logging.LevelInfo, "[API Proxy Forward] "+h.method+" "+h.origPath+" -> "+p.Name+
-			" ("+orDefault(candModel, "default")+")"+
-			ifAny(h.keyName != "", " [Key: "+h.keyName+"]", "")+
-			ifAny(inbound != target, " [convert "+inbound+"->"+target+"]", "")+
-			" [=> "+realPath+"]")
-		if h.logDetail == "all" {
-			h.proxyLog(a, logging.LevelInfo, "[API Proxy Request URL] "+h.method+" "+targetURL)
-		}
-		if h.logBody && h.detailActiveFor(500) && (h.method == "POST" || h.method == "PUT") && attemptBody != nil {
-			if b, err := json.Marshal(attemptBody); err == nil {
-				h.proxyLog(a, logging.LevelInfo, "[API Proxy Request Body] "+string(b))
-			}
-		}
-
-		// 并发控制（覆盖整个转发+回传周期）
-		sem := a.Sem(p.ID, p.Concurrency)
-
-		res, cancelFn, aborted, reason, status, timeoutErr := a.forwardOnce(h, p, attemptBody, targetURL, r.Context(), sem)
-		if aborted {
+		out := a.attemptProvider(h, p, reqBody, origModel, r.Context())
+		if out.Aborted {
 			h.proxyLog(a, logging.LevelWarn, "[API Proxy Aborted] Client closed connection ("+spanMs(h.start)+")")
 			a.logRequest(h, p.Name, h.reqModel, 499, 0, 0, 0, 0, false, "client closed connection")
 			return
 		}
-		if res != nil {
+		if out.Resp != nil {
 			a.Breaker.RecordSuccess(p.ID)
 			if fromGroup {
-				a.Health.RecordSuccess(p.ID, candModel)
+				a.Health.RecordSuccess(p.ID, out.CandModel)
 			}
-			if inbound != target {
-				a.transpileResponse(w, r, h, p, res, inbound, target, candModel)
+			if out.Inbound != out.Target {
+				a.transpileResponse(w, r, h, p, out.Resp, out.Inbound, out.Target, out.CandModel)
 			} else {
-				a.streamResponse(w, r, h, p, res, isStream(res))
+				a.streamResponse(w, r, h, p, out.Resp, isStream(out.Resp))
 			}
-			cancelFn()
+			if out.Cancel != nil {
+				out.Cancel()
+			}
 			return
 		}
-
-		// 协议未确定时，非200 均翻转到另一协议重试一次。
-		if probe && status != 200 {
-			flipped := protoChat
-			if target == protoChat {
-				flipped = protoResponses
-			}
-			convBody, cerr := convertRequestBody(inbound, flipped, candBody)
-			if cerr == nil {
-				probeURL := buildTargetURL(p, flipped)
-				probeRealPath := p.ChatEndpoint
-				if flipped == protoResponses {
-					probeRealPath = p.ResponsesEndpoint
-				}
-				if probeRealPath == "" {
-					probeRealPath = targetSubPath(flipped)
-				}
-				h.proxyLog(a, logging.LevelInfo, "[API Proxy Forward] "+h.method+" "+h.origPath+" -> "+p.Name+
-					" ("+orDefault(candModel, "default")+")"+
-					ifAny(h.keyName != "", " [Key: "+h.keyName+"]", "")+
-					ifAny(inbound != flipped, " [convert "+inbound+"->"+flipped+"]", "")+
-					" [=> "+probeRealPath+"]")
-				if h.logDetail == "all" {
-					h.proxyLog(a, logging.LevelInfo, "[API Proxy Request URL] "+h.method+" "+probeURL)
-				}
-				if h.logBody && h.detailActiveFor(500) && (h.method == "POST" || h.method == "PUT") && convBody != nil {
-					if b, err := json.Marshal(convBody); err == nil {
-						h.proxyLog(a, logging.LevelInfo, "[API Proxy Request Body] "+string(b))
-					}
-				}
-				res2, cancel2, ab2, rs2, st2, te2 := a.forwardOnce(h, p, convBody, probeURL, r.Context(), sem)
-				if ab2 {
-					h.proxyLog(a, logging.LevelWarn, "[API Proxy Aborted] Client closed connection ("+spanMs(h.start)+")")
-					a.logRequest(h, p.Name, h.reqModel, 499, 0, 0, 0, 0, false, "client closed connection")
-					return
-				}
-				if res2 != nil {
-					a.Breaker.RecordSuccess(p.ID)
-					if fromGroup {
-						a.Health.RecordSuccess(p.ID, candModel)
-					}
-					a.persistDiscoveredProtocol(p.ID, candModel, flipped)
-					h.proxyLog(a, logging.LevelInfo, "[API Proxy] protocol probe succeeded by flipping to '"+flipped+"' ("+p.Name+"/"+candModel+") [=> "+probeRealPath+"]")
-					if inbound != flipped {
-						a.transpileResponse(w, r, h, p, res2, inbound, flipped, candModel)
-					} else {
-						a.streamResponse(w, r, h, p, res2, isStream(res2))
-					}
-					cancel2()
-					return
-				}
-				// 翻转后仍失败：不单独计数，统一由外层一次失败计数，避免对同一 provider/model 重复计数
-				status = st2
-				timeoutErr = te2
-				reason = rs2
-			}
+		if out.ConversionFailed {
+			h.degradedFrom = append(h.degradedFrom, p.Name+" (conversion error)")
+			h.lastStatus = out.Status
+			h.lastProvider = p.Name
+			h.failureLogged = true
+			continue
 		}
 
 		a.Breaker.RecordFailure(p.ID)
 		if fromGroup {
 			a.Health.RecordFailure(p.ID, h.reqModel)
 		}
-		if timeoutErr {
+		if out.TimeoutErr {
 			h.timedOut = true
 		}
-		h.degradedFrom = append(h.degradedFrom, p.Name+" ("+reason+")")
-		h.lastStatus = status
+		h.degradedFrom = append(h.degradedFrom, p.Name+" ("+out.Reason+")")
+		h.lastStatus = out.Status
 		h.lastProvider = p.Name
 		h.failureLogged = true
-		a.logRequest(h, p.Name, candModel, status, 0, 0, 0, 0, false, reason)
-		h.proxyLog(a, logging.LevelWarn, "[API Proxy Degrade] "+p.Name+" failed: "+reason+", trying next provider")
+		a.logRequest(h, p.Name, out.CandModel, out.Status, 0, 0, 0, 0, false, out.Reason)
+		h.proxyLog(a, logging.LevelWarn, "[API Proxy Degrade] "+p.Name+" failed: "+out.Reason+", trying next provider")
 	}
 
 	// 全部失败
@@ -645,7 +718,7 @@ func (a *App) forwardOnce(h *handlerCtx, p *Provider, candBody map[string]interf
 		}
 		resp.Body.Close()
 		cancel()
-		return nil, nil, false, "HTTP "+itoa(resp.StatusCode), resp.StatusCode, false
+		return nil, nil, false, "HTTP " + itoa(resp.StatusCode), resp.StatusCode, false
 	}
 	return resp, cancel, false, "", resp.StatusCode, false
 }
@@ -907,4 +980,3 @@ func levelFor(timeout bool) string {
 func itoa(n int) string { return fmt.Sprintf("%d", n) }
 
 func spanMs(t time.Time) string { return fmt.Sprintf("%dms", time.Since(t).Milliseconds()) }
-

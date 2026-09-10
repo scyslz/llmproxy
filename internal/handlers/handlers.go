@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"encoding/json"
-	"io"
 	"math/rand"
 	"net/http"
 	"os"
@@ -21,12 +20,12 @@ import (
 
 // Manager 持有管理 API 所需的所有依赖。
 type Manager struct {
-	Cfg        *config.Manager
-	SysStore   *logstore.SystemStore
-	ReqStore   *logstore.RequestStore
-	Log        *logging.Logger
-	Auth       *auth.Admin
-	ProxyApp   *proxy.App
+	Cfg      *config.Manager
+	SysStore *logstore.SystemStore
+	ReqStore *logstore.RequestStore
+	Log      *logging.Logger
+	Auth     *auth.Admin
+	ProxyApp *proxy.App
 }
 
 // NewManager 构造管理 API 处理者。
@@ -824,28 +823,10 @@ func (m *Manager) HandleGroupTest(w http.ResponseWriter, r *http.Request, id str
 			if model == "" {
 				continue
 			}
-			start := time.Now()
-			bodyBytes, _ := json.Marshal(map[string]interface{}{
-				"model":      model,
-				"messages":   []map[string]string{{"role": "user", "content": "hi"}},
-				"max_tokens": 1,
-			})
-			targetURL := proxy.ResolveTargetURL(p.BaseURL, p.ChatEndpoint, "/v1/chat/completions")
-			resp, err := m.ProxyApp.Client.Do(r.Context(), "POST", targetURL,
-				http.Header{"Content-Type": {"application/json"}, "Authorization": {"Bearer " + p.APIKey}},
-				strings.NewReader(string(bodyBytes)),
-				5*time.Second)
-			dur := time.Since(start).Milliseconds()
-			if err != nil {
-				results = append(results, testResult{ProviderID: e.ProviderID, Model: model, OK: false, Error: err.Error(), DurationMS: dur})
-				continue
-			}
-			io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
+			okRes, status, dur, errMsg := m.ProxyApp.ProbeChat(r.Context(), p, model, true)
 			results = append(results, testResult{
 				ProviderID: e.ProviderID, Model: model,
-				OK: resp.StatusCode >= 200 && resp.StatusCode < 300,
-				Status: resp.StatusCode, DurationMS: dur,
+				OK: okRes, Status: status, DurationMS: dur, Error: errMsg,
 			})
 		}
 	}

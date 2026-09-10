@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Provider, VirtualKey, SystemLog, ProviderGroup, GroupTestEntry } from "./types";
+import { Provider, VirtualKey, SystemLog, ProviderGroup } from "./types";
 import { motion, AnimatePresence } from "motion/react";
 import Header from "./components/Header";
 import ProviderCard from "./components/ProviderCard";
@@ -33,7 +33,6 @@ export default function App() {
   const [playgroundKey, setPlaygroundKey] = useState("");
   const [playgroundModel, setPlaygroundModel] = useState("");
   const [playgroundFormat, setPlaygroundFormat] = useState<"chat" | "responses">("chat");
-  const [groupTestResults, setGroupTestResults] = useState<GroupTestEntry[] | null>(null);
   const [isTestingGroup, setIsTestingGroup] = useState(false);
   const lastLogIdRef = useRef(0);
 
@@ -393,19 +392,17 @@ export default function App() {
                   const res = await apiFetch("/api/groups/" + id, { method: "DELETE" });
                   if (!res.ok) throw new Error("Failed to delete group");
                   setGroups((prev) => prev.filter((g) => g.id !== id));
-                  setGroupTestResults(null);
                 }}
                 onTest={async (id) => {
                   setIsTestingGroup(true);
                   try {
-                    const res = await apiFetch("/api/groups/" + id + "/test");
+                    const res = await apiFetch("/api/groups/" + id + "/test", { method: "POST" });
                     if (!res.ok) throw new Error("Test failed");
-                    setGroupTestResults(await res.json());
+                    return await res.json();
                   } finally {
                     setIsTestingGroup(false);
                   }
                 }}
-                testResults={groupTestResults}
                 isTesting={isTestingGroup}
               />
             </motion.div>

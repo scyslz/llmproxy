@@ -8,8 +8,7 @@ interface GroupCardProps {
   onCreate: (group: Omit<ProviderGroup, "createdAt">) => Promise<void>;
   onUpdate: (id: string, patch: Partial<ProviderGroup>) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
-  onTest: (id: string) => Promise<void>;
-  testResults: GroupTestEntry[] | null;
+  onTest: (id: string) => Promise<GroupTestEntry[] | void>;
   isTesting: boolean;
 }
 
@@ -20,76 +19,94 @@ export default function GroupCard({
   onUpdate,
   onDelete,
   onTest,
-  testResults,
   isTesting
 }: GroupCardProps) {
   const [isEditing, setIsEditing] = useState<string | null>(null);
-  const [entries, setEntries] = useState<GroupEntry[]>([]);
+  const [flatItems, setFlatItems] = useState<{ providerId: string; model: string }[]>([]);
+  const [newPid, setNewPid] = useState("");
+  const [newModel, setNewModel] = useState("");
   const [testResultMap, setTestResultMap] = useState<Record<string, GroupTestEntry[]>>({});
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const startEdit = (g?: ProviderGroup) => {
     if (g) {
-      setEntries((g.entries || []).map(e => ({ ...e })));
+      const flat: { providerId: string; model: string }[] = [];
+      for (const e of g.entries || []) {
+        if (!e.models || e.models.length === 0) {
+          flat.push({ providerId: e.providerId, model: "" });
+        } else {
+          for (const m of e.models) {
+            flat.push({ providerId: e.providerId, model: m });
+          }
+        }
+      }
+      setFlatItems(flat);
     } else {
-      setEntries([]);
+      setFlatItems([]);
     }
+    setNewPid("");
+    setNewModel("");
     setIsEditing(g ? g.id : "new");
   };
 
   const save = async () => {
-    if (!entries.length) return;
+    if (!flatItems.length) return;
     const id = isEditing === "new" ? "g_" + Date.now().toString(36) : isEditing!;
     const nameInput = document.getElementById("group-name-input") as HTMLInputElement;
     const name = nameInput?.value.trim() || (isEditing === "new" ? "New Group" : "");
+    const grouped: GroupEntry[] = [];
+    const map = new Map<string, { providerId: string; models: string[] }>();
+    for (const item of flatItems) {
+      if (!map.has(item.providerId)) {
+        map.set(item.providerId, { providerId: item.providerId, models: [] });
+      }
+      if (item.model) {
+        map.get(item.providerId)!.models.push(item.model);
+      }
+    }
+    for (const entry of map.values()) {
+      grouped.push(entry);
+    }
     if (isEditing === "new") {
-      await onCreate({ id, name, entries });
+      await onCreate({ id, name, entries: grouped });
     } else {
-      await onUpdate(id, { name, entries });
+      await onUpdate(id, { name, entries: grouped });
     }
     setIsEditing(null);
   };
 
-  const addNewEntry = (pid: string) => {
-    setEntries(prev => [...prev, { providerId: pid, models: [] }]);
+  const addFlatItem = () => {
+    if (!newPid || !newModel.trim()) return;
+    const model = newModel.trim();
+    if (flatItems.some(f => f.providerId === newPid && f.model === model)) return;
+    setFlatItems(prev => [...prev, { providerId: newPid, model }]);
+    setNewModel("");
   };
 
-  const removeEntry = (idx: number) => {
-    setEntries(prev => prev.filter((_, i) => i !== idx));
+  const removeFlatItem = (idx: number) => {
+    setFlatItems(prev => prev.filter((_, i) => i !== idx));
   };
 
-  const moveEntry = (idx: number, dir: -1 | 1) => {
-    setEntries(prev => {
+  const moveFlatItem = (idx: number, dir: -1 | 1) => {
+    setFlatItems(prev => {
       const next = [...prev];
       const target = idx + dir;
-      if (target < 0 || target >= next.length) return prev;
+      if (target < 0 || target >= next.length) return next;
       [next[idx], next[target]] = [next[target], next[idx]];
       return next;
     });
   };
 
-  const toggleModel = (entryIdx: number, model: string) => {
-    setEntries(prev => prev.map((e, i) => {
-      if (i !== entryIdx) return e;
-      const has = e.models?.includes(model);
-      return { ...e, models: has ? (e.models || []).filter(m => m !== model) : [...(e.models || []), model] };
-    }));
-  };
-
   const handleTest = async (id: string) => {
-    await onTest(id);
-    try {
-      const res = await fetch(`/api/groups/${id}/test`);
-      if (res.ok) {
-        const data = await res.json();
-        setTestResultMap(prev => ({ ...prev, [id]: data }));
-      }
-    } catch {}
+    const data = await onTest(id);
+    if (data && data.length >= 0) {
+      setTestResultMap(prev => ({ ...prev, [id]: data }));
+    }
   };
 
   const getTestEntries = (groupId: string) => testResultMap[groupId] || [];
 
-  const existingPids = new Set(entries.map(e => e.providerId));
+  const existingPids = new Set(flatItems.map(f => f.providerId));
   const availableForNew = providers.filter(p => !existingPids.has(p.id));
 
   const modalClass = "fixed inset-0 z-50 flex items-center justify-center p-4 bg-neutral-900/20 backdrop-blur-sm";
@@ -139,113 +156,86 @@ export default function GroupCard({
                 </div>
               </div>
 
-              {/* Existing entries chain */}
+              {/* Flat model chain */}
               <div className="space-y-2">
                 <label className="text-xs font-medium text-neutral-500 block">
-                  Chain entries (ordered by priority)
+                  Fallback chain (ordered by priority)
                 </label>
-                {entries.length === 0 && (
+                {flatItems.length === 0 && (
                   <p className="text-xs text-neutral-400 italic py-2 text-center border border-dashed border-neutral-200 rounded-xl">
-                    No entries yet. Add entries below to build your chain.
+                    No models yet. Add models below to build your chain.
                   </p>
                 )}
-                {entries.map((e, idx) => {
-                  const p = providers.find(x => x.id === e.providerId);
+                {flatItems.map((item, idx) => {
+                  const p = providers.find(x => x.id === item.providerId);
                   return (
-                    <div key={idx} className={`border rounded-xl overflow-hidden ${p ? "border-neutral-200" : "border-red-200"}`}>
-                      <div className={`flex items-center gap-2 px-3 py-2 ${p ? "bg-neutral-50" : "bg-red-50"}`}>
-                        <span className={`w-2 h-2 rounded-full shrink-0 ${p ? "bg-emerald-400" : "bg-red-400"}`} />
-                        <span className="text-[10px] text-neutral-400 font-mono w-4 text-center">{idx + 1}</span>
-                        {p ? (
-                          <>
-                            <span className="text-xs font-semibold text-neutral-800">{p.name}</span>
-                            <span className="text-[10px] font-mono text-neutral-400">{e.providerId}</span>
-                            {e.models?.length > 0 ? (
-                              <span className="text-[10px] font-mono text-violet-600 bg-violet-50 px-1.5 py-0.5 rounded truncate max-w-[200px]" title={e.models.join(", ")}>
-                                {e.models.join(", ")}
-                              </span>
-                            ) : (
-                              <span className="text-[10px] text-neutral-400">all models</span>
-                            )}
-                          </>
-                        ) : (
-                          <span className="text-xs text-red-500 font-mono">{e.providerId} (not found)</span>
-                        )}
-                        <div className="flex items-center gap-1 ml-auto shrink-0">
-                          <button onClick={() => moveEntry(idx, -1)} disabled={idx === 0}
-                            className="p-1 hover:bg-neutral-200 rounded disabled:opacity-20 cursor-pointer">
-                            <ChevronUp className="w-3 h-3" />
-                          </button>
-                          <button onClick={() => moveEntry(idx, 1)} disabled={idx === entries.length - 1}
-                            className="p-1 hover:bg-neutral-200 rounded disabled:opacity-20 cursor-pointer">
-                            <ChevronDown className="w-3 h-3" />
-                          </button>
-                          <button onClick={() => removeEntry(idx)} className="p-1 text-red-400 hover:bg-red-50 rounded cursor-pointer">
-                            <Minus className="w-3 h-3" />
-                          </button>
-                        </div>
-                      </div>
-                      {p && p.models.length > 0 && (
-                        <div className="border-t border-neutral-150 px-3 py-2 bg-white">
-                          <p className="text-[10px] text-neutral-500 font-medium mb-2">Select models:</p>
-                          <div className="flex flex-wrap gap-1.5">
-                            <button type="button" onClick={() => toggleModel(idx, "")}
-                              className={`px-2 py-1 rounded-lg text-[10px] border transition-colors cursor-pointer ${
-                                (!e.models || e.models.length === 0)
-                                  ? "bg-violet-600 text-white border-violet-600"
-                                  : "bg-neutral-50 text-neutral-600 border-neutral-200 hover:border-neutral-400"
-                              }`}>
-                              All models
-                            </button>
-                            {p.models.map(m => {
-                              const sel = e.models?.includes(m);
-                              return (
-                                <button key={m} type="button" onClick={() => toggleModel(idx, m)}
-                                  className={`px-2 py-1 rounded-lg text-[10px] font-mono border transition-colors cursor-pointer ${
-                                    sel
-                                      ? "bg-violet-600 text-white border-violet-600"
-                                      : "bg-neutral-50 text-neutral-600 border-neutral-200 hover:border-neutral-400"
-                                  }`}>
-                                  {m}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
+                    <div key={idx} className={`flex items-center gap-2 px-3 py-2 rounded-xl border ${p ? "border-neutral-200 bg-neutral-50" : "border-red-200 bg-red-50"}`}>
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${p ? "bg-emerald-400" : "bg-red-400"}`} />
+                      <span className="text-[10px] text-neutral-400 font-mono w-4 text-center">{idx + 1}</span>
+                      <span className="text-[10px] font-semibold text-violet-700 bg-violet-50 px-1.5 py-0.5 rounded shrink-0">{item.providerId}</span>
+                      <span className="text-neutral-300 text-[10px] shrink-0">/</span>
+                      <span className="text-[10px] font-mono text-neutral-700 flex-1 truncate">{item.model || "all models"}</span>
+                      <button onClick={() => moveFlatItem(idx, -1)} disabled={idx === 0}
+                        className="p-1 hover:bg-neutral-200 rounded disabled:opacity-20 cursor-pointer">
+                        <ChevronUp className="w-3 h-3" />
+                      </button>
+                      <button onClick={() => moveFlatItem(idx, 1)} disabled={idx === flatItems.length - 1}
+                        className="p-1 hover:bg-neutral-200 rounded disabled:opacity-20 cursor-pointer">
+                        <ChevronDown className="w-3 h-3" />
+                      </button>
+                      <button onClick={() => removeFlatItem(idx)} className="p-1 text-red-400 hover:bg-red-50 rounded cursor-pointer">
+                        <Minus className="w-3 h-3" />
+                      </button>
                     </div>
                   );
                 })}
               </div>
 
-              {/* Add new entries section */}
+              {/* Add new model */}
               <div className="space-y-2">
-                <label className="text-xs font-medium text-neutral-500 block">Add providers to chain:</label>
-
-                {availableForNew.length === 0 ? (
-                  <p className="text-xs text-neutral-400 italic py-2 text-center border border-dashed border-neutral-200 rounded-xl">
-                    All providers added
-                  </p>
-                ) : (
-                  availableForNew.map(p => (
-                    <div key={p.id} className="border border-neutral-200 rounded-xl overflow-hidden">
-                      <div className="flex items-center gap-2 px-3 py-2 bg-neutral-50">
-                        <span className="text-xs font-semibold text-neutral-800">{p.name}</span>
-                        <span className="text-[10px] font-mono text-neutral-400">{p.id}</span>
-                        <button onClick={() => addNewEntry(p.id)}
-                          className="ml-auto inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-neutral-900 hover:bg-neutral-800 transition-colors cursor-pointer">
-                          <Plus className="w-3 h-3" />
-                          Add
-                        </button>
-                      </div>
-                    </div>
-                  ))
-                )}
+                <label className="text-xs font-medium text-neutral-500 block">Add model:</label>
+                <div className="flex items-center gap-2">
+                  <select
+                    className={`${inputClass} py-1.5 text-[11px] font-mono w-40`}
+                    value={newPid}
+                    onChange={(ev) => setNewPid(ev.target.value)}
+                  >
+                    <option value="">provider...</option>
+                    {providers.map(p => (
+                      <option key={p.id} value={p.id}>{p.name} ({p.id})</option>
+                    ))}
+                  </select>
+                  <input
+                    list={`group-model-suggest`}
+                    className={`${inputClass} py-1.5 text-[11px] font-mono flex-1`}
+                    placeholder="model id (empty = all)"
+                    value={newModel}
+                    onChange={(ev) => setNewModel(ev.target.value)}
+                    onKeyDown={(ev) => {
+                      if (ev.key === "Enter") {
+                        ev.preventDefault();
+                        addFlatItem();
+                      }
+                    }}
+                  />
+                  <datalist id="group-model-suggest">
+                    {providers.flatMap(p => (p.models || []).map(m => ({ pid: p.id, m }))).map(({ pid, m }) => (
+                      <option key={`${pid}/${m}`} value={m} />
+                    ))}
+                  </datalist>
+                  <button type="button" onClick={addFlatItem}
+                    disabled={!newPid || !newModel.trim()}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-medium text-white bg-neutral-900 hover:bg-neutral-800 disabled:bg-neutral-300 transition-colors cursor-pointer shrink-0">
+                    <Plus className="w-3 h-3" />
+                    Add
+                  </button>
+                </div>
+                <p className="text-[10px] text-neutral-400">Leave model empty to use all models on that provider.</p>
               </div>
             </div>
             <div className="flex justify-end space-x-2 px-6 py-4 bg-neutral-50 border-t border-neutral-200 shrink-0">
               <button onClick={() => setIsEditing(null)} className={btnSecondary}>Cancel</button>
-              <button onClick={save} disabled={entries.length === 0}
+              <button onClick={save} disabled={flatItems.length === 0}
                 className="bg-neutral-900 text-white hover:bg-neutral-800 disabled:bg-neutral-300 px-4 py-2 rounded-xl text-xs font-semibold transition-colors cursor-pointer">
                 {isEditing === "new" ? "Create Group" : "Save Changes"}
               </button>
