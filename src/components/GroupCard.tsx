@@ -98,9 +98,13 @@ export default function GroupCard({
   };
 
   const handleTest = async (id: string) => {
-    const data = await onTest(id);
-    if (data && data.length >= 0) {
-      setTestResultMap(prev => ({ ...prev, [id]: data }));
+    try {
+      const data = await onTest(id);
+      if (data && data.length >= 0) {
+        setTestResultMap(prev => ({ ...prev, [id]: data }));
+      }
+    } catch {
+      setTestResultMap(prev => ({ ...prev, [id]: [] }));
     }
   };
 
@@ -294,37 +298,45 @@ export default function GroupCard({
             {/* Entry chain - compact */}
             <div className="px-5 py-3">
               <div className="flex flex-wrap items-center gap-x-1 gap-y-1">
-                {g.entries?.map((e, idx) => {
-                  const p = providers.find(x => x.id === e.providerId);
-                  const missing = !p;
+                {(() => {
+                  const flat: { label: string; providerId: string }[] = [];
+                  for (const e of g.entries || []) {
+                    if (!e.models || e.models.length === 0) {
+                      flat.push({ label: `${e.providerId}/*`, providerId: e.providerId });
+                    } else {
+                      for (const m of e.models) {
+                        flat.push({ label: `${e.providerId}/${m}`, providerId: e.providerId });
+                      }
+                    }
+                  }
+                  const maxShow = 6;
+                  const shown = flat.slice(0, maxShow);
+                  const rest = flat.length - maxShow;
                   return (
-                    <React.Fragment key={e.providerId + idx}>
-                      <div className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs ${
-                        missing
-                          ? "border-red-200 bg-red-50"
-                          : "border-neutral-200 bg-neutral-50 hover:border-neutral-300"
-                      }`}>
-                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${missing ? "bg-red-400" : "bg-emerald-400"}`} />
-                        <span className="font-mono font-semibold text-neutral-700">{e.providerId}</span>
-                        {!missing && <span className="text-neutral-400 text-[10px]">{p.name}</span>}
-                        {e.models?.length > 0 ? (
-                          <span className="text-[10px] font-mono text-violet-600 bg-violet-50 px-1 rounded truncate max-w-[160px]" title={e.models.join(", ")}>
-                            {e.models.join(", ")}
-                          </span>
-                        ) : (
-                          <span className="text-[10px] text-neutral-400">all models</span>
-                        )}
-                        <span className="text-neutral-300 text-[10px]">#{idx + 1}</span>
-                      </div>
-                      {idx < (g.entries?.length || 0) - 1 && (
-                        <ChevronRight className="w-3 h-3 text-neutral-300 shrink-0" />
+                    <>
+                      {shown.map((item, idx) => {
+                        const missing = !providers.find(x => x.id === item.providerId);
+                        return (
+                          <React.Fragment key={item.label + idx}>
+                            <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-mono ${
+                              missing ? "border-red-200 bg-red-50 text-red-600" : "border-neutral-200 bg-neutral-50 text-neutral-700"
+                            }`}>
+                              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${missing ? "bg-red-400" : "bg-emerald-400"}`} />
+                              {item.label}
+                            </span>
+                            {idx < shown.length - 1 && <span className="text-neutral-300 text-[10px]">&gt;</span>}
+                          </React.Fragment>
+                        );
+                      })}
+                      {rest > 0 && (
+                        <span className="text-[10px] text-neutral-400">+{rest} more</span>
                       )}
-                    </React.Fragment>
+                      {flat.length === 0 && (
+                        <p className="text-xs text-neutral-400 italic">No entries</p>
+                      )}
+                    </>
                   );
-                })}
-                {g.entries?.length === 0 && (
-                  <p className="text-xs text-neutral-400 italic">No entries</p>
-                )}
+                })()}
               </div>
             </div>
 

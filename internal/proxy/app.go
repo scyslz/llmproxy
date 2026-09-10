@@ -236,7 +236,7 @@ func (a *App) attemptProvider(h *handlerCtx, p *Provider, reqBody map[string]int
 	if h.logDetail == "all" {
 		h.proxyLog(a, logging.LevelInfo, "[API Proxy Request URL] "+h.method+" "+targetURL)
 	}
-	if h.logBody && h.detailActiveFor(500) && (h.method == "POST" || h.method == "PUT") && attemptBody != nil {
+	if h.logBody && (h.method == "POST" || h.method == "PUT") && attemptBody != nil {
 		if b, err := json.Marshal(attemptBody); err == nil {
 			h.proxyLog(a, logging.LevelInfo, "[API Proxy Request Body] "+string(b))
 		}
@@ -274,7 +274,7 @@ func (a *App) attemptProvider(h *handlerCtx, p *Provider, reqBody map[string]int
 			if h.logDetail == "all" {
 				h.proxyLog(a, logging.LevelInfo, "[API Proxy Request URL] "+h.method+" "+probeURL)
 			}
-			if h.logBody && h.detailActiveFor(500) && (h.method == "POST" || h.method == "PUT") && convBody != nil {
+			if h.logBody && (h.method == "POST" || h.method == "PUT") && convBody != nil {
 				if b, err := json.Marshal(convBody); err == nil {
 					h.proxyLog(a, logging.LevelInfo, "[API Proxy Request Body] "+string(b))
 				}
@@ -700,14 +700,11 @@ func (a *App) forwardOnce(h *handlerCtx, p *Provider, candBody map[string]interf
 		return nil, nil, false, "connection error: " + err.Error(), 502, false
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		detailActive := h.detailActiveFor(resp.StatusCode)
-		if detailActive {
-			if h.logDetail == "error" {
-				h.proxyLog(a, logging.LevelInfo, "[API Proxy Request Headers] "+formatHeaders(hdr))
-			}
-			h.proxyLog(a, logging.LevelInfo, "[API Proxy Response Headers] "+formatHeaders(resp.Header))
+		if h.logDetail == "error" {
+			h.proxyLog(a, logging.LevelInfo, "[API Proxy Request Headers] "+formatHeaders(hdr))
 		}
-		if detailActive && h.logBody {
+		h.proxyLog(a, logging.LevelInfo, "[API Proxy Response Headers] "+formatHeaders(resp.Header))
+		if h.logBody {
 			bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 			if len(bodyBytes) > 0 {
 				h.proxyLog(a, logging.LevelInfo, "[API Proxy Response Body] "+string(bodyBytes))
@@ -811,7 +808,7 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, h *handlerC
 		}
 	}
 
-	if h.logBody && detailActive && body.Len() > 0 {
+	if h.logBody && body.Len() > 0 {
 		h.proxyLog(a, logging.LevelInfo, "[API Proxy Response Body] "+body.String())
 	}
 
