@@ -251,7 +251,7 @@ func (a *App) attemptProvider(h *handlerCtx, p *Provider, reqBody map[string]int
 		return AttemptResult{Resp: res, Cancel: cancelFn, Status: status, Inbound: inbound, Target: target, CandModel: candModel}
 	}
 
-	if probe && status != 200 {
+	if probe && status == 404 {
 		flipped := protoChat
 		if target == protoChat {
 			flipped = protoResponses
@@ -310,10 +310,10 @@ func (a *App) ProbeChat(ctx context.Context, p *Provider, model string, fromGrou
 		cfg:       cfg,
 		logDetail: orDefault(cfg.LogDetail, "basic"),
 		logBody:   cfg.LogBody,
-		keyName:   "group-test",
+		keyName:   "group-test:" + p.ID,
 		reqModel:  model,
 	}
-	h.proxyLog(a, logging.LevelInfo, "[API Proxy] POST /v1/chat/completions initiated (group test)")
+	h.proxyLog(a, logging.LevelInfo, "[API Proxy] POST /v1/chat/completions initiated (group test:"+p.ID+")")
 	body := map[string]interface{}{
 		"model":      model,
 		"messages":   []map[string]string{{"role": "user", "content": "hi"}},

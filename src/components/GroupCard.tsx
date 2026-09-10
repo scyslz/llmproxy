@@ -106,9 +106,6 @@ export default function GroupCard({
 
   const getTestEntries = (groupId: string) => testResultMap[groupId] || [];
 
-  const existingPids = new Set(flatItems.map(f => f.providerId));
-  const availableForNew = providers.filter(p => !existingPids.has(p.id));
-
   const modalClass = "fixed inset-0 z-50 flex items-center justify-center p-4 bg-neutral-900/20 backdrop-blur-sm";
   const cardClass = "bg-white border border-neutral-200 rounded-2xl shadow-sm overflow-hidden";
   const inputClass = "w-full bg-white border border-neutral-250 rounded-xl px-3.5 py-2 text-sm text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400";
@@ -198,33 +195,29 @@ export default function GroupCard({
                   <select
                     className={`${inputClass} py-1.5 text-[11px] font-mono w-40`}
                     value={newPid}
-                    onChange={(ev) => setNewPid(ev.target.value)}
+                    onChange={(ev) => {
+                      setNewPid(ev.target.value);
+                      setNewModel("");
+                    }}
                   >
                     <option value="">provider...</option>
                     {providers.map(p => (
                       <option key={p.id} value={p.id}>{p.name} ({p.id})</option>
                     ))}
                   </select>
-                  <input
-                    list={`group-model-suggest`}
+                  <select
                     className={`${inputClass} py-1.5 text-[11px] font-mono flex-1`}
-                    placeholder="model id (empty = all)"
                     value={newModel}
                     onChange={(ev) => setNewModel(ev.target.value)}
-                    onKeyDown={(ev) => {
-                      if (ev.key === "Enter") {
-                        ev.preventDefault();
-                        addFlatItem();
-                      }
-                    }}
-                  />
-                  <datalist id="group-model-suggest">
-                    {providers.flatMap(p => (p.models || []).map(m => ({ pid: p.id, m }))).map(({ pid, m }) => (
-                      <option key={`${pid}/${m}`} value={m} />
+                    disabled={!newPid}
+                  >
+                    <option value="">{newPid ? "all models" : "select provider first"}</option>
+                    {newPid && (providers.find(p => p.id === newPid)?.models || []).map(m => (
+                      <option key={m} value={m}>{m}</option>
                     ))}
-                  </datalist>
+                  </select>
                   <button type="button" onClick={addFlatItem}
-                    disabled={!newPid || !newModel.trim()}
+                    disabled={!newPid}
                     className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-medium text-white bg-neutral-900 hover:bg-neutral-800 disabled:bg-neutral-300 transition-colors cursor-pointer shrink-0">
                     <Plus className="w-3 h-3" />
                     Add
