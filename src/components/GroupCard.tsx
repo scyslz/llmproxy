@@ -200,7 +200,7 @@ export default function GroupCard({
                 <label className="text-xs font-medium text-neutral-500 block">Add model:</label>
                 <div className="flex items-center gap-2">
                   <select
-                    className={`${inputClass} py-1.5 text-[11px] font-mono w-40`}
+                    className={`select ${inputClass} py-1.5 text-[11px] font-mono w-40`}
                     value={newPid}
                     onChange={(ev) => {
                       setNewPid(ev.target.value);
@@ -213,7 +213,7 @@ export default function GroupCard({
                     ))}
                   </select>
                   <select
-                    className={`${inputClass} py-1.5 text-[11px] font-mono flex-1`}
+                    className={`select ${inputClass} py-1.5 text-[11px] font-mono flex-1`}
                     value={newModel}
                     onChange={(ev) => setNewModel(ev.target.value)}
                     disabled={!newPid}

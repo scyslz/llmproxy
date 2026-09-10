@@ -129,7 +129,7 @@ export default function RequestLogs({ virtualKeys, providers, onViewLogs }: Requ
             <select
               value={keyFilter}
               onChange={(e) => setKeyFilter(e.target.value)}
-              className="w-full bg-white border border-neutral-200 rounded-lg px-3 py-1.5 text-xs text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400 cursor-pointer"
+              className="select w-full bg-white border border-neutral-200 rounded-lg px-3 py-1.5 text-xs text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400 cursor-pointer"
             >
               <option value="">All Keys</option>
               {virtualKeys.map((k) => (
@@ -152,7 +152,7 @@ export default function RequestLogs({ virtualKeys, providers, onViewLogs }: Requ
             <select
               value={providerFilter}
               onChange={(e) => setProviderFilter(e.target.value)}
-              className="w-full bg-white border border-neutral-200 rounded-lg px-3 py-1.5 text-xs text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400 cursor-pointer"
+              className="select w-full bg-white border border-neutral-200 rounded-lg px-3 py-1.5 text-xs text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400 cursor-pointer"
             >
               <option value="">All Providers</option>
               {providers.map((p) => (
@@ -165,7 +165,7 @@ export default function RequestLogs({ virtualKeys, providers, onViewLogs }: Requ
             <select
               value={timeRange}
               onChange={(e) => { setTimeRange(e.target.value); setPage(1); }}
-              className="w-full bg-white border border-neutral-200 rounded-lg px-3 py-1.5 text-xs text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400"
+              className="select w-full bg-white border border-neutral-200 rounded-lg px-3 py-1.5 text-xs text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400"
             >
               {TIME_RANGES.map((r) => (
                 <option key={r.id} value={r.id}>{r.label}</option>
@@ -177,7 +177,7 @@ export default function RequestLogs({ virtualKeys, providers, onViewLogs }: Requ
             <select
               value={statusFilter}
               onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
-              className="w-full bg-white border border-neutral-200 rounded-lg px-3 py-1.5 text-xs text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400 cursor-pointer"
+              className="select w-full bg-white border border-neutral-200 rounded-lg px-3 py-1.5 text-xs text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400 cursor-pointer"
             >
               <option value="">All</option>
               <option value="2xx">2xx</option>

@@ -328,7 +328,7 @@ export default function ProviderCard({
               <select
                 value={formData.protocol}
                 onChange={(e) => setFormData({ ...formData, protocol: e.target.value })}
-                className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2 text-sm text-neutral-800 outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 cursor-pointer shadow-2xs"
+                className="select w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2 text-sm text-neutral-800 outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 cursor-pointer shadow-2xs"
               >
                 <option value="">Auto (probe on 404)</option>
                 <option value="chat">Chat Completions (/v1/chat/completions)</option>
@@ -531,7 +531,7 @@ export default function ProviderCard({
                 <select
                   value={formData.defaultModel}
                   onChange={(e) => setFormData({ ...formData, defaultModel: e.target.value })}
-                  className="w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2 text-sm text-neutral-800 outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 cursor-pointer shadow-2xs"
+                  className="select w-full bg-white border border-neutral-300 rounded-xl px-3.5 py-2 text-sm text-neutral-800 outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 cursor-pointer shadow-2xs"
                 >
                   <option value="">Auto (first model in list)</option>
                   {currentSelectedModels.map((m) => (

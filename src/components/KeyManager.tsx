@@ -291,7 +291,7 @@ export default function KeyManager({
                 <select
                   value={selectedGroupId}
                   onChange={(e) => setSelectedGroupId(e.target.value)}
-                  className="w-full bg-white border border-neutral-250 rounded-xl px-3.5 py-2 text-sm text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400"
+                  className="select w-full bg-white border border-neutral-250 rounded-xl px-3.5 py-2 text-sm text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400"
                 >
                   <option value="">-- None --</option>
                   {groups.map((g) => (

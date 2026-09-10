@@ -359,7 +359,7 @@ export default function Playground({ virtualKeys, providers, activeProviderName,
                 setSelectedProviderId(e.target.value);
                 setSelectedModel("");
               }}
-              className="w-full bg-white border border-neutral-300 rounded-xl px-3 py-2 sm:py-1.5 text-xs sm:text-sm text-neutral-800 font-medium outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 shadow-2xs transition-all cursor-pointer"
+              className="select w-full bg-white border border-neutral-300 rounded-xl px-3 py-2 sm:py-1.5 text-xs sm:text-sm text-neutral-800 font-medium outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 shadow-2xs transition-all cursor-pointer"
             >
               <option value="">LLM Proxy (routed)</option>
               {providers.map((p) => (
@@ -384,7 +384,7 @@ export default function Playground({ virtualKeys, providers, activeProviderName,
               <select
                 value={selectedKey}
                 onChange={(e) => setSelectedKey(e.target.value)}
-                className="w-full bg-white border border-neutral-300 rounded-xl px-3 py-2 sm:py-1.5 text-xs sm:text-sm text-neutral-800 font-medium outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 shadow-2xs transition-all"
+                className="select w-full bg-white border border-neutral-300 rounded-xl px-3 py-2 sm:py-1.5 text-xs sm:text-sm text-neutral-800 font-medium outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 shadow-2xs transition-all"
               >
                 <option value="">None (Direct proxy)</option>
                 {virtualKeys.map((k) => (
@@ -436,7 +436,7 @@ export default function Playground({ virtualKeys, providers, activeProviderName,
               value={selectedModel}
               onChange={(e) => setSelectedModel(e.target.value)}
               disabled={models.length === 0}
-              className="w-full bg-white border border-neutral-300 rounded-xl px-3 py-2 sm:py-1.5 text-xs sm:text-sm text-neutral-800 font-medium outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 disabled:bg-neutral-100 disabled:text-neutral-400 shadow-2xs transition-all truncate"
+              className="select w-full bg-white border border-neutral-300 rounded-xl px-3 py-2 sm:py-1.5 text-xs sm:text-sm text-neutral-800 font-medium outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 disabled:bg-neutral-100 disabled:text-neutral-400 shadow-2xs transition-all truncate"
             >
               {models.length === 0 ? (
                 <option value="">No models available</option>
