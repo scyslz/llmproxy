@@ -317,7 +317,7 @@ func (a *App) ProbeChat(ctx context.Context, p *Provider, model string, fromGrou
 	body := map[string]interface{}{
 		"model":      model,
 		"messages":   []map[string]string{{"role": "user", "content": "hi"}},
-		"max_tokens": 16,
+		"max_tokens": 1000,
 	}
 	out := a.attemptProvider(h, p, body, model, ctx)
 	dur := time.Since(start).Milliseconds()
