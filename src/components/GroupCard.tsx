@@ -26,6 +26,7 @@ export default function GroupCard({
   const [newPid, setNewPid] = useState("");
   const [newModel, setNewModel] = useState("");
   const [testResultMap, setTestResultMap] = useState<Record<string, GroupTestEntry[]>>({});
+  const [showResults, setShowResults] = useState<Record<string, boolean>>({});
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const startEdit = (g?: ProviderGroup) => {
@@ -102,9 +103,11 @@ export default function GroupCard({
       const data = await onTest(id);
       if (data && data.length >= 0) {
         setTestResultMap(prev => ({ ...prev, [id]: data }));
+        setShowResults(prev => ({ ...prev, [id]: true }));
       }
     } catch {
       setTestResultMap(prev => ({ ...prev, [id]: [] }));
+      setShowResults(prev => ({ ...prev, [id]: false }));
     }
   };
 
@@ -342,26 +345,39 @@ export default function GroupCard({
 
             {/* Test results */}
             {testEntriesData.length > 0 && (
-              <div className="mx-5 mb-4 p-3 bg-neutral-50 border border-neutral-150 rounded-xl">
-                <p className="text-[10px] font-medium text-neutral-400 uppercase tracking-wider mb-2">Test Results</p>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                  {testEntriesData.map((tr, i) => (
-                    <div key={i} className={`px-2.5 py-2 rounded-lg border text-xs ${
-                      tr.ok
-                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                        : "border-red-200 bg-red-50 text-red-700"
-                    }`}>
-                      <div className="flex items-center gap-1.5">
-                        {tr.ok ? <CheckCircle2 className="w-3 h-3 shrink-0" /> : <XCircle className="w-3 h-3 shrink-0" />}
-                        <span className="font-mono font-semibold">{tr.model}</span>
-                      </div>
-                      <p className="text-[10px] text-neutral-500 mt-0.5">
-                        {tr.providerId} {tr.durationMs}ms{tr.status ? ` · ${tr.status}` : ""}
-                      </p>
-                      {tr.error && <p className="text-[10px] text-red-500 truncate mt-0.5">{tr.error}</p>}
+              <div className="mx-5 mb-4 rounded-xl overflow-hidden">
+                <button
+                  onClick={() => setShowResults(prev => ({ ...prev, [g.id]: !prev[g.id] }))}
+                  className="w-full flex items-center justify-between px-3 py-2 bg-neutral-50 border border-neutral-200 hover:bg-neutral-100 transition-colors cursor-pointer"
+                >
+                  <span className="text-[10px] font-medium text-neutral-400 uppercase tracking-wider">Test Results</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-neutral-400">{testEntriesData.filter(t => t.ok).length}/{testEntriesData.length} ok</span>
+                    <ChevronDown className={`w-3 h-3 text-neutral-400 transition-transform ${showResults[g.id] ? "rotate-180" : ""}`} />
+                  </div>
+                </button>
+                {showResults[g.id] && (
+                  <div className="p-3 bg-neutral-50 border border-t-0 border-neutral-200">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {testEntriesData.map((tr, i) => (
+                        <div key={i} className={`px-2.5 py-2 rounded-lg border text-xs ${
+                          tr.ok
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                            : "border-red-200 bg-red-50 text-red-700"
+                        }`}>
+                          <div className="flex items-center gap-1.5">
+                            {tr.ok ? <CheckCircle2 className="w-3 h-3 shrink-0" /> : <XCircle className="w-3 h-3 shrink-0" />}
+                            <span className="font-mono font-semibold">{tr.model}</span>
+                          </div>
+                          <p className="text-[10px] text-neutral-500 mt-0.5">
+                            {tr.providerId} {tr.durationMs}ms{tr.status ? ` · ${tr.status}` : ""}
+                          </p>
+                          {tr.error && <p className="text-[10px] text-red-500 truncate mt-0.5">{tr.error}</p>}
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
