@@ -251,7 +251,7 @@ func (a *App) attemptProvider(h *handlerCtx, p *Provider, reqBody map[string]int
 		return AttemptResult{Resp: res, Cancel: cancelFn, Status: status, Inbound: inbound, Target: target, CandModel: candModel}
 	}
 
-	if probe && status == 404 {
+	if probe && status != 200 {
 		flipped := protoChat
 		if target == protoChat {
 			flipped = protoResponses
@@ -317,7 +317,7 @@ func (a *App) ProbeChat(ctx context.Context, p *Provider, model string, fromGrou
 	body := map[string]interface{}{
 		"model":      model,
 		"messages":   []map[string]string{{"role": "user", "content": "hi"}},
-		"max_tokens": 1,
+		"max_tokens": 16,
 	}
 	out := a.attemptProvider(h, p, body, model, ctx)
 	dur := time.Since(start).Milliseconds()
