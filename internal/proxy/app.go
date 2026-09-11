@@ -236,7 +236,9 @@ func (a *App) attemptProvider(h *handlerCtx, p *Provider, reqBody map[string]int
 	if h.logDetail == "all" {
 		h.proxyLog(a, logging.LevelInfo, "[API Proxy Request URL] "+h.method+" "+targetURL)
 	}
-	if h.logBody && (h.method == "POST" || h.method == "PUT") && attemptBody != nil {
+	// Request Body 仅在 all 模式预先打印；error 模式需等状态码已知后、
+	// 仅非 2xx 才在 forwardOnce 失败分支中补打，避免 200 成功请求也被打印。
+	if h.logBody && h.logDetail == "all" && (h.method == "POST" || h.method == "PUT") && attemptBody != nil {
 		if b, err := json.Marshal(attemptBody); err == nil {
 			h.proxyLog(a, logging.LevelInfo, "[API Proxy Request Body] "+string(b))
 		}
@@ -274,7 +276,7 @@ func (a *App) attemptProvider(h *handlerCtx, p *Provider, reqBody map[string]int
 			if h.logDetail == "all" {
 				h.proxyLog(a, logging.LevelInfo, "[API Proxy Request URL] "+h.method+" "+probeURL)
 			}
-			if h.logBody && (h.method == "POST" || h.method == "PUT") && convBody != nil {
+			if h.logBody && h.logDetail == "all" && (h.method == "POST" || h.method == "PUT") && convBody != nil {
 				if b, err := json.Marshal(convBody); err == nil {
 					h.proxyLog(a, logging.LevelInfo, "[API Proxy Request Body] "+string(b))
 				}
@@ -694,17 +696,30 @@ func (a *App) forwardOnce(h *handlerCtx, p *Provider, candBody map[string]interf
 		if clientCtx.Err() == context.Canceled {
 			return nil, nil, true, "", 0, false
 		}
+		if h.logBody && h.logDetail == "error" && (h.method == "POST" || h.method == "PUT") && candBody != nil {
+			if b, merr := json.Marshal(candBody); merr == nil {
+				h.proxyLog(a, logging.LevelInfo, "[API Proxy Request Body] "+string(b))
+			}
+		}
 		if timeoutErrState {
 			return nil, nil, false, "timeout after " + p.Timeout.String(), 504, true
 		}
 		return nil, nil, false, "connection error: " + err.Error(), 502, false
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if h.logDetail == "error" {
-			h.proxyLog(a, logging.LevelInfo, "[API Proxy Request Headers] "+formatHeaders(hdr))
+		if h.detailActiveFor(resp.StatusCode) {
+			if h.logDetail == "error" {
+				h.proxyLog(a, logging.LevelInfo, "[API Proxy Request Headers] "+formatHeaders(hdr))
+				// error 模式 Request Body 事后补打（all 模式已在转发前打印，避免重复）
+				if h.logBody && (h.method == "POST" || h.method == "PUT") && candBody != nil {
+					if b, err := json.Marshal(candBody); err == nil {
+						h.proxyLog(a, logging.LevelInfo, "[API Proxy Request Body] "+string(b))
+					}
+				}
+			}
+			h.proxyLog(a, logging.LevelInfo, "[API Proxy Response Headers] "+formatHeaders(resp.Header))
 		}
-		h.proxyLog(a, logging.LevelInfo, "[API Proxy Response Headers] "+formatHeaders(resp.Header))
-		if h.logBody {
+		if h.logBody && h.detailActiveFor(resp.StatusCode) {
 			bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 			if len(bodyBytes) > 0 {
 				h.proxyLog(a, logging.LevelInfo, "[API Proxy Response Body] "+string(bodyBytes))
@@ -808,7 +823,7 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, h *handlerC
 		}
 	}
 
-	if h.logBody && body.Len() > 0 {
+	if h.logBody && h.detailActiveFor(statusOut) && body.Len() > 0 {
 		h.proxyLog(a, logging.LevelInfo, "[API Proxy Response Body] "+body.String())
 	}
 

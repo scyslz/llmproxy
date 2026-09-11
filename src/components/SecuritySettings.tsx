@@ -32,6 +32,7 @@ export default function SecuritySettings({
   const [logBody, setLogBody] = useState<boolean>(false);
   const [customSizeInput, setCustomSizeInput] = useState<string>("");
   const [requestLogCount, setRequestLogCount] = useState<number | null>(null);
+  const [logLoading, setLogLoading] = useState(true);
 
   const fetchLogStatusAndSettings = async () => {
     try {
@@ -40,9 +41,11 @@ export default function SecuritySettings({
         apiFetch("/api/settings"),
         apiFetch("/api/request-logs/stats").catch(() => null)
       ]);
-      const statusData = await statusRes.json();
-      setLogStatus(statusData);
-      setSelectedMaxSize(statusData.maxLogSizeMB || 2);
+      if (statusRes.ok) {
+        const statusData = await statusRes.json();
+        setLogStatus(statusData);
+        setSelectedMaxSize(statusData.maxLogSizeMB || 2);
+      }
       if (setRes.ok) {
         const setData = await setRes.json();
         setLogDetail(setData.logDetail || "basic");
@@ -52,11 +55,40 @@ export default function SecuritySettings({
         const statsData = await reqStatsRes.json();
         setRequestLogCount(statsData.count ?? null);
       }
-    } catch {}
+    } catch {} finally {
+      setLogLoading(false);
+    }
   };
 
   useEffect(() => {
-    fetchLogStatusAndSettings();
+    let cancelled = false;
+    (async () => {
+      try {
+        const [statusRes, setRes, reqStatsRes] = await Promise.all([
+          apiFetch("/api/logs/status"),
+          apiFetch("/api/settings"),
+          apiFetch("/api/request-logs/stats").catch(() => null)
+        ]);
+        if (cancelled) return;
+        if (statusRes.ok) {
+          const statusData = await statusRes.json();
+          setLogStatus(statusData);
+          setSelectedMaxSize(statusData.maxLogSizeMB || 2);
+        }
+        if (setRes.ok) {
+          const setData = await setRes.json();
+          setLogDetail(setData.logDetail || "basic");
+          setLogBody(setData.logBody === true);
+        }
+        if (reqStatsRes && reqStatsRes.ok) {
+          const statsData = await reqStatsRes.json();
+          setRequestLogCount(statsData.count ?? null);
+        }
+      } catch {} finally {
+        if (!cancelled) setLogLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   const handleToggleLogBody = async (val: boolean) => {
@@ -362,7 +394,7 @@ export default function SecuritySettings({
               Controls how much detail is recorded for proxy forwards (/v1/*). System and management logs are always recorded.
             </p>
 
-            <div className="pt-3 mt-3 border-t border-neutral-100 space-y-4">
+            <div className="pt-3 mt-3 border-t border-neutral-100 space-y-4 min-h-[228px]">
               <div className="bg-neutral-50 p-3.5 rounded-xl border border-neutral-200/80 space-y-2">
                 <div className="text-xs font-semibold text-neutral-800">Log Detail</div>
                 <div className="grid grid-cols-2 gap-2">
@@ -371,37 +403,40 @@ export default function SecuritySettings({
                     ["basic", "Basic", "Summary only"],
                     ["error", "Error", "Summary + details on non-2xx"],
                     ["all", "All", "Full request/response details"]
-                  ] as const).map(([val, label, hint]) => (
-                    <button
-                      key={val}
-                      type="button"
-                      disabled={logActionLoading}
-                      onClick={() => handleChangeLogDetail(val)}
-                      className={`text-left px-3 py-2 rounded-xl text-xs transition-all cursor-pointer disabled:opacity-50 ${
-                        logDetail === val
-                          ? "bg-neutral-900 text-white shadow-xs"
-                          : "bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-200"
-                      }`}
-                    >
-                      <div className="font-semibold">{label}</div>
-                      <div className={`text-[10px] ${logDetail === val ? "text-neutral-300" : "text-neutral-500"}`}>{hint}</div>
-                    </button>
-                  ))}
+                  ] as const).map(([val, label, hint]) => {
+                    const selected = !logLoading && logDetail === val;
+                    return (
+                      <button
+                        key={val}
+                        type="button"
+                        disabled={logActionLoading || logLoading}
+                        onClick={() => handleChangeLogDetail(val)}
+                        className={`text-left px-3 py-2 rounded-xl text-xs transition-all cursor-pointer disabled:opacity-50 ${
+                          selected
+                            ? "bg-neutral-900 text-white shadow-xs"
+                            : "bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-200"
+                        }`}
+                      >
+                        <div className="font-semibold">{label}</div>
+                        <div className={`text-[10px] ${selected ? "text-neutral-300" : "text-neutral-500"}`}>{hint}</div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
               <div className="flex items-center justify-between bg-neutral-50 p-3 rounded-xl border border-neutral-200/80">
                 <div className="space-y-0.5">
                   <div className="text-xs font-semibold text-neutral-800">Log Body</div>
-                  <div className="text-[11px] text-neutral-500">Include request/response body in detail logs</div>
+                  <div className="text-[11px] text-neutral-500">Error: bodies only on non-2xx · All: always</div>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer select-none">
                   <input
                     type="checkbox"
                     className="sr-only peer"
-                    checked={logBody}
+                    checked={logLoading ? false : logBody}
                     onChange={(e) => handleToggleLogBody(e.target.checked)}
-                    disabled={logActionLoading || logDetail === "off" || logDetail === "basic"}
+                    disabled={logActionLoading || logLoading || logDetail === "off" || logDetail === "basic"}
                   />
                   <div className="w-9 h-5 bg-neutral-250 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-neutral-900"></div>
                 </label>
@@ -422,16 +457,18 @@ export default function SecuritySettings({
               Configures the maximum size of the system log database (system_logs.db). When the limit is reached, the oldest log bucket is dropped automatically to prevent unlimited disk growth.
             </p>
 
-            {logStatus && (
-              <div className="p-3.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs flex items-center justify-between">
-                <div className="text-neutral-600 font-medium">
-                  <span>Current Disk Log Storage Usage:</span>
-                </div>
+            <div className="p-3.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs flex items-center justify-between min-h-[52px]">
+              <div className="text-neutral-600 font-medium">
+                <span>Current Disk Log Storage Usage:</span>
+              </div>
+              {logStatus ? (
                 <div className="font-mono font-bold text-neutral-800 text-sm">
                   {formatSize(logStatus.totalSize)} <span className="text-neutral-400 font-normal text-xs">/ {selectedMaxSize} MB Max Capacity</span>
                 </div>
-              </div>
-            )}
+              ) : (
+                <div className="h-4 w-32 rounded bg-neutral-200 animate-pulse" />
+              )}
+            </div>
 
             <div className="space-y-2 pt-1">
               <label className="text-xs font-semibold text-neutral-700 block">Max Size Per File Limit:</label>
@@ -444,7 +481,7 @@ export default function SecuritySettings({
                       handleSaveLogSize(size);
                       setCustomSizeInput("");
                     }}
-                    disabled={logActionLoading || selectedMaxSize === size}
+                    disabled={logActionLoading || logLoading || selectedMaxSize === size}
                     className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
                       selectedMaxSize === size
                         ? "bg-neutral-900 text-white shadow-xs"
@@ -479,12 +516,12 @@ export default function SecuritySettings({
               </div>
             </div>
 
-            <div className="flex items-center justify-end space-x-3 pt-2 border-t border-neutral-100">
-              {requestLogCount !== null && (
-                <span className="text-[11px] text-neutral-500 mr-auto">
-                  {requestLogCount.toLocaleString()} request usage record{requestLogCount === 1 ? "" : "s"}
-                </span>
-              )}
+            <div className="flex items-center justify-end space-x-3 pt-2 border-t border-neutral-100 min-h-[36px]">
+              <span className="text-[11px] text-neutral-500 mr-auto min-w-[160px] inline-block">
+                {requestLogCount !== null
+                  ? `${requestLogCount.toLocaleString()} request usage record${requestLogCount === 1 ? "" : "s"}`
+                  : logLoading ? "…" : ""}
+              </span>
               <button
                 type="button"
                 onClick={handleClearRequestLogs}
