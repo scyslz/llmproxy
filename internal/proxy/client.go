@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -21,10 +22,11 @@ type Provider struct {
 	ChatEndpoint      string
 	ResponsesEndpoint string
 	DefaultModel   string
-	Protocol       string
-	ModelProtocols map[string]string
-	Timeout        time.Duration
-	Concurrency    int
+	Protocol            string
+	ModelProtocols      map[string]string
+	ModelContextLengths map[string]int
+	Timeout             time.Duration
+	Concurrency         int
 }
 
 // Client 执行对上游的具体 HTTP 请求。
@@ -41,20 +43,48 @@ func NewClient() *Client {
 	}}}
 }
 
+// cancelOnClose 在 Body 读完或关闭时才取消超时 context，避免响应头返回后立刻
+// cancel 导致大 body（如 OpenRouter /v1/models）读到一半被切断。
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+	once   sync.Once
+}
+
+func (c *cancelOnClose) Read(p []byte) (int, error) {
+	n, err := c.ReadCloser.Read(p)
+	if err != nil {
+		c.once.Do(c.cancel)
+	}
+	return n, err
+}
+
+func (c *cancelOnClose) Close() error {
+	err := c.ReadCloser.Close()
+	c.once.Do(c.cancel)
+	return err
+}
+
 // Do 将请求发送到上游，返回响应（调用方负责关闭 Body）。
-// timeout>0 时为请求施加超时；ctx 取消（客户端断开）则返回 ctx 的错误。
+// timeout>0 时超时覆盖到 Body 读完/关闭为止；ctx 取消（客户端断开）则返回 ctx 的错误。
 func (c *Client) Do(ctx context.Context, method, url string, headers http.Header, body io.Reader, timeout time.Duration) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
 		return nil, err
 	}
 	req.Header = headers
-	if timeout > 0 {
-		dctx, cancel := context.WithTimeout(ctx, timeout)
-		defer cancel()
-		req = req.WithContext(dctx)
+	if timeout <= 0 {
+		return c.httpClient.Do(req)
 	}
-	return c.httpClient.Do(req)
+	dctx, cancel := context.WithTimeout(ctx, timeout)
+	req = req.WithContext(dctx)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
+	return resp, nil
 }
 
 // UsageParser 增量解析 SSE 流中的 model 与 usage 字段。

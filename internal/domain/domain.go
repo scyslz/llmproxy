@@ -18,6 +18,8 @@ type Provider struct {
 	Protocol string `json:"protocol,omitempty"`
 	// ModelProtocols 按 (model) 覆盖 Protocol，由 404 探测成功后自动写入。
 	ModelProtocols map[string]string `json:"modelProtocols,omitempty"`
+	// ModelContextLengths 按 model id 记录上游返回的最大上下文（token）。
+	ModelContextLengths map[string]int `json:"modelContextLengths,omitempty"`
 }
 
 // VirtualKey maps a client-facing key to a set of authorized providers.
@@ -78,7 +80,7 @@ func (c *Config) ToSettings() Settings {
 		LogDetail:        orString(c.LogDetail, "basic"),
 		LogBody:          c.LogBody,
 		MaxLogSizeMB:     orInt(c.MaxLogSizeMB, 2),
-		MaxRequestLogs:   orInt(c.MaxRequestLogs, 10000),
+		MaxRequestLogs:   orInt(c.MaxRequestLogs, 100000),
 		ActiveLogFile:    orInt(c.ActiveLogFile, 1),
 	}
 }

@@ -370,9 +370,18 @@ func OpenRequest(path string, max int) (*RequestStore, error) {
 		return nil, err
 	}
 	if max <= 0 {
-		max = 10000
+		max = 100000
 	}
 	return &RequestStore{db: db, max: max}, nil
+}
+
+func (s *RequestStore) SetMax(max int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if max <= 0 {
+		max = 100000
+	}
+	s.max = max
 }
 
 // Insert appends a request log and trims the oldest rows above the max.

@@ -6,7 +6,7 @@
   "logDetail": "basic",
   "logBody": false,
   "maxLogSizeMB": 2,
-  "maxRequestLogs": 10000,
+  "maxRequestLogs": 100000,
   "activeLogFile": 1,
   "providers": [
     {

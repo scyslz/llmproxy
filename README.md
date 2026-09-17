@@ -62,7 +62,7 @@ Docker Compose uses image `scyslz/llmproxy` without local build. Inside the cont
   "logDetail": "basic",          // off | basic | error | all
   "logBody": false,              // log request/response bodies (requires logDetail=all)
   "maxLogSizeMB": 10,            // system log DB size limit
-  "maxRequestLogs": 10000,       // max retained request logs (oldest pruned)
+  "maxRequestLogs": 100000,      // max retained request logs (oldest pruned)
   "activeLogFile": 1,            // log bucket 1|2, toggled on rotation
   "providers": [
     {

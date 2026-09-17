@@ -56,7 +56,8 @@ export default function ProviderCard({
       chatEndpoint: "",
       responsesEndpoint: "",
       defaultModel: "",
-      protocol: ""
+      protocol: "",
+      modelContextLengths: {} as Record<string, number>
   });
   const [showApiKeyId, setShowApiKeyId] = useState<string | null>(null);
   const [showApiKeyForm, setShowApiKeyForm] = useState(false);
@@ -89,7 +90,8 @@ export default function ProviderCard({
         chatEndpoint: "",
         responsesEndpoint: "",
         defaultModel: "",
-        protocol: ""
+        protocol: "",
+        modelContextLengths: {}
     });
   };
 
@@ -105,7 +107,8 @@ export default function ProviderCard({
         chatEndpoint: p.chatEndpoint || "",
         responsesEndpoint: p.responsesEndpoint || "",
       defaultModel: p.defaultModel || "",
-      protocol: p.protocol || ""
+      protocol: p.protocol || "",
+      modelContextLengths: p.modelContextLengths || {}
     });
     setIsEditing(p.id);
   };
@@ -122,7 +125,8 @@ export default function ProviderCard({
         chatEndpoint: "",
         responsesEndpoint: "",
         defaultModel: "",
-        protocol: ""
+        protocol: "",
+        modelContextLengths: {}
     });
     setIsEditing("new");
   };
@@ -155,7 +159,12 @@ export default function ProviderCard({
           .map(m => (m || "").trim())
           .filter(Boolean);
         const merged = Array.from(new Set([...currentList, ...data.models]));
-        setFormData(prev => ({ ...prev, modelsString: merged.join(", ") }));
+        const incoming = (data.contextLengths || {}) as Record<string, number>;
+        setFormData(prev => ({
+          ...prev,
+          modelsString: merged.join(", "),
+          modelContextLengths: { ...(prev.modelContextLengths || {}), ...incoming }
+        }));
       } else {
         setFetchError("No models returned from provider endpoint.");
       }
@@ -180,7 +189,11 @@ export default function ProviderCard({
       });
       const data = await res.json();
       if (res.ok && data.models && data.models.length > 0) {
-        onUpdate(p.id, { models: data.models });
+        const patch: Partial<Provider> = { models: data.models };
+        if (data.contextLengths && Object.keys(data.contextLengths).length > 0) {
+          patch.modelContextLengths = data.contextLengths;
+        }
+        onUpdate(p.id, patch);
       } else {
         alert(data.error || "No models returned from provider endpoint.");
       }
@@ -231,6 +244,11 @@ export default function ProviderCard({
 
     const dm = (formData.defaultModel || "").trim();
     const defaultModel = (dm && models.includes(dm)) ? dm : undefined;
+    const modelContextLengths: Record<string, number> = {};
+    for (const m of models) {
+      const n = formData.modelContextLengths?.[m];
+      if (n && n > 0) modelContextLengths[m] = n;
+    }
 
     const submissionData = {
       id: (formData.id || "").toLowerCase().trim(),
@@ -242,7 +260,8 @@ export default function ProviderCard({
       chatEndpoint: (formData.chatEndpoint || "").trim() || undefined,
       responsesEndpoint: (formData.responsesEndpoint || "").trim() || undefined,
       defaultModel,
-      protocol: formData.protocol || undefined
+      protocol: formData.protocol || undefined,
+      modelContextLengths
     };
 
     if (isEditing === "new") {

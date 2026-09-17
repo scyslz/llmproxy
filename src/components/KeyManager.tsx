@@ -74,12 +74,13 @@ export default function KeyManager({
   const startEdit = (k: VirtualKey) => {
     setEditingKey(k);
     setName(k.name);
-    if (k.providerIds.length === 0 || k.providerIds.includes("all") || k.providerIds.includes("*")) {
+    const ids = k.providerIds || [];
+    if (ids.length === 0 || ids.includes("all") || ids.includes("*")) {
       setScopeMode("all");
       setSelectedProviders([]);
     } else {
       setScopeMode("custom");
-      setSelectedProviders(k.providerIds);
+      setSelectedProviders(ids);
     }
     setSelectedGroupId(k.groupId || "");
     setIsAdding(true);
@@ -228,7 +229,7 @@ export default function KeyManager({
                           >
                             <span className="text-neutral-400 font-mono w-4 text-center">{index + 1}</span>
                             <span className="flex-1 font-semibold">{p?.name || id}</span>
-                            <span className="text-[10px] text-neutral-400">{p?.models.length || 0} models</span>
+                             <span className="text-[10px] text-neutral-400">{p?.models?.length || 0} models</span>
                             <button
                               type="button"
                               onClick={() => moveProvider(index, "up")}
@@ -275,7 +276,7 @@ export default function KeyManager({
                           />
                           <div className="flex-1">
                             <p className="text-xs font-semibold">{p.name}</p>
-                            <p className="text-[10px] text-neutral-500">{p.models.length} models</p>
+                             <p className="text-[10px] text-neutral-500">{p.models?.length || 0} models</p>
                           </div>
                           <Plus className="w-3.5 h-3.5 text-neutral-400" />
                         </label>
@@ -362,13 +363,13 @@ export default function KeyManager({
                       </div>
                     </td>
                     <td className="py-4">
-                      {k.providerIds.length === 0 || k.providerIds.includes("all") || k.providerIds.includes("*") ? (
+                      {!(k.providerIds || []).length || (k.providerIds || []).includes("all") || (k.providerIds || []).includes("*") ? (
                         <span className="bg-emerald-100 text-emerald-800 border border-emerald-200 px-2.5 py-0.5 rounded-full text-[10px] font-bold inline-flex items-center space-x-1">
                           <span>ALL PROVIDERS (Universal)</span>
                         </span>
                       ) : (
                         <div className="flex flex-wrap gap-1 items-center">
-                          {k.providerIds.slice(0, 2).map((pId) => {
+                          {(k.providerIds || []).slice(0, 2).map((pId) => {
                             const pName = providers.find((p) => p.id === pId)?.name || pId;
                             return (
                               <span key={pId} className="bg-neutral-800 text-white px-2 py-0.5 rounded-full text-[10px] font-semibold whitespace-nowrap">
@@ -376,14 +377,14 @@ export default function KeyManager({
                               </span>
                             );
                           })}
-                          {k.providerIds.length > 2 && (
+                          {(k.providerIds || []).length > 2 && (
                             <span
                               className="relative group bg-neutral-200 text-neutral-600 px-2 py-0.5 rounded-full text-[10px] font-semibold cursor-default"
                             >
-                              +{k.providerIds.length - 2} more
+                               +{(k.providerIds || []).length - 2} more
                               <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block z-10">
                                 <div className="bg-neutral-900 text-white text-[10px] rounded-lg px-3 py-2 shadow-xl whitespace-nowrap flex flex-wrap gap-1.5 max-w-[300px]">
-                                  {k.providerIds.map((pId) => {
+                                  {(k.providerIds || []).map((pId) => {
                                     const pName = providers.find((p) => p.id === pId)?.name || pId;
                                     return <span key={pId} className="bg-neutral-700 px-1.5 py-0.5 rounded">{pName}</span>;
                                   })}
