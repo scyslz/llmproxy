@@ -82,10 +82,11 @@ func ProviderFromDomain(p *domain.Provider) *Provider {
 		ChatEndpoint:      p.ChatEndpoint,
 		ResponsesEndpoint: p.ResponsesEndpoint,
 		DefaultModel:      p.DefaultModel,
-		Protocol:          p.Protocol,
-		ModelProtocols:    p.ModelProtocols,
-		Timeout:           time.Duration(p.Timeout) * time.Millisecond,
-		Concurrency:       p.Concurrency,
+		Protocol:            p.Protocol,
+		ModelProtocols:      p.ModelProtocols,
+		ModelContextLengths: p.ModelContextLengths,
+		Timeout:             time.Duration(p.Timeout) * time.Millisecond,
+		Concurrency:         p.Concurrency,
 	}
 }
 

@@ -103,7 +103,7 @@ func defaultConfig() *domain.Config {
 		LogDetail:        "basic",
 		LogBody:          false,
 		MaxLogSizeMB:     2,
-		MaxRequestLogs:   10000,
+		MaxRequestLogs:   100000,
 		ActiveLogFile:    1,
 		Providers: []domain.Provider{
 			{ID: "gemini", Name: "Google Gemini", BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai", APIKey: os.Getenv("GEMINI_API_KEY"), Enabled: true, Models: []string{"gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash"}, Timeout: 120000},
@@ -145,6 +145,7 @@ type rawProvider struct {
 	ChatEndpoint      string `json:"chatEndpoint"`
 	ResponsesEndpoint string `json:"responsesEndpoint"`
 	DefaultModel   string   `json:"defaultModel"`
+	ModelContextLengths map[string]int `json:"modelContextLengths,omitempty"`
 	// Legacy/alternate field names kept for compatibility.
 	BaseUrl2 string `json:"base_url"`
 	APIKey2  string `json:"api_key"`
@@ -240,7 +241,8 @@ func (rp rawProvider) toProvider() domain.Provider {
 		Models:         rp.Models,
 		ChatEndpoint:      orString(rp.ChatEndpoint, orString(rp.OpenAIEndpoint, rp.OpenA2)),
 		ResponsesEndpoint: rp.ResponsesEndpoint,
-		DefaultModel:   orString(rp.DefaultModel, rp.Default2),
+		DefaultModel:        orString(rp.DefaultModel, rp.Default2),
+		ModelContextLengths: rp.ModelContextLengths,
 	}
 	if rp.Enabled != nil {
 		p.Enabled = *rp.Enabled

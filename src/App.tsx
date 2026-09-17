@@ -245,7 +245,14 @@ export default function App() {
       });
       if (!res.ok) throw new Error("Failed to update virtual key");
       const updated = await res.json();
-      setVirtualKeys((prev) => prev.map((k) => (k.key === keyStr ? updated : k)));
+      setVirtualKeys((prev) => prev.map((k) => (k.key === keyStr ? {
+        ...k,
+        ...updated,
+        key: k.key,
+        providerIds: Array.isArray(updated.providerIds) ? updated.providerIds : providerIds,
+        groupId: updated.groupId ?? groupId,
+        name: updated.name || name
+      } : k)));
     } catch (err: any) {
       alert(`Error updating virtual key: ${err.message}`);
     }

@@ -1,10 +1,13 @@
 package proxy
 
 import (
+	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"llmproxy/internal/circuit"
 	"llmproxy/internal/config"
@@ -13,6 +16,160 @@ import (
 	"llmproxy/internal/logging"
 	"llmproxy/internal/logstore"
 )
+
+func TestExtractModelsOpenRouterShape(t *testing.T) {
+	body := `{"data":[{"id":"openai/gpt-4o","name":"GPT-4o","context_length":128000,"architecture":{"modality":"text->text","input_modalities":["text"]},"pricing":{"prompt":"0.000001"}},{"id":"anthropic/claude-3","name":"Claude 3","context_length":200000}],"total_count":2,"links":{"self":"/api/v1/models"}}`
+	ids, err := extractModelsFromReader(strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 2 || ids[0].ID != "openai/gpt-4o" || ids[1].ID != "anthropic/claude-3" {
+		t.Fatalf("ids = %+v", ids)
+	}
+	if ids[0].ContextLength != 128000 || ids[1].ContextLength != 200000 {
+		t.Fatalf("context = %+v", ids)
+	}
+}
+
+func TestExtractModelsGeminiShape(t *testing.T) {
+	body := `{"models":[{"name":"models/gemini-2.5-flash","displayName":"Gemini","inputTokenLimit":1048576},{"name":"models/gemini-pro"}]}`
+	ids, err := extractModelsFromReader(strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 2 || ids[0].ID != "gemini-2.5-flash" || ids[1].ID != "gemini-pro" {
+		t.Fatalf("ids = %+v", ids)
+	}
+	if ids[0].ContextLength != 1048576 {
+		t.Fatalf("context = %+v", ids)
+	}
+}
+
+func TestExtractModelsTopLevelArray(t *testing.T) {
+	ids, err := extractModelsFromReader(strings.NewReader(`["a","b",{"id":"c"}]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 3 || ids[0].ID != "a" || ids[1].ID != "b" || ids[2].ID != "c" {
+		t.Fatalf("ids = %+v", ids)
+	}
+}
+
+func TestClientDoTimeoutKeepsBodyReadable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if fl, ok := w.(http.Flusher); ok {
+			fl.Flush()
+		}
+		time.Sleep(80 * time.Millisecond)
+		_, _ = w.Write([]byte(`{"data":[`))
+		for i := 0; i < 200; i++ {
+			if i > 0 {
+				_, _ = w.Write([]byte(`,`))
+			}
+			_, _ = w.Write([]byte(`{"id":"m-` + itoa(i) + `","architecture":{"input_modalities":["text","image"]},"pricing":{"prompt":"0"}}`))
+		}
+		_, _ = w.Write([]byte(`],"total_count":200}`))
+	}))
+	defer srv.Close()
+
+	cl := NewClient()
+	resp, err := cl.Do(context.Background(), "GET", srv.URL, http.Header{}, nil, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	ids, err := extractModelsFromReader(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 200 {
+		t.Fatalf("ids = %d, want 200", len(ids))
+	}
+}
+
+func TestFetchRemoteModelsOpenRouterLike(t *testing.T) {
+	payload := []byte(`{"object":"list","data":[{"id":"stealth/union-alpha","name":"Union Alpha","context_length":262144,"architecture":{"modality":"text+image->text"},"pricing":{"prompt":"0"}},{"id":"openai/gpt-4o","name":"GPT-4o","context_length":128000}],"total_count":2}`)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/models" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if fl, ok := w.(http.Flusher); ok {
+			fl.Flush()
+		}
+		time.Sleep(40 * time.Millisecond)
+		_, _ = w.Write(payload)
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	cm, err := config.New(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sysStore, err := logstore.OpenSystem(tmp + "/system.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sysStore.Close()
+	a := &App{
+		Cfg:    cm,
+		Client: NewClient(),
+		Logger: logging.New(cm, sysStore),
+	}
+	req := httptest.NewRequest("POST", "/api/providers/fetch-remote-models", bytes.NewReader([]byte(`{"baseUrl":"`+srv.URL+`/api/v1"}`)))
+	rec := httptest.NewRecorder()
+	a.FetchRemoteModels(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"stealth/union-alpha"`) || !strings.Contains(body, `"openai/gpt-4o"`) {
+		t.Fatalf("unexpected body: %s", body)
+	}
+	if !strings.Contains(body, `"contextLengths"`) || !strings.Contains(body, "262144") {
+		t.Fatalf("missing contextLengths: %s", body)
+	}
+}
+
+func TestHandleModelsIncludesContextLength(t *testing.T) {
+	tmp := t.TempDir()
+	cm, err := config.New(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := testConfig()
+	cfg.EnableVirtualKey = false
+	cfg.Providers = []domain.Provider{
+		{ID: "or", Name: "OR", BaseURL: "http://example", Enabled: true, Models: []string{"openai/gpt-4o", "plain"}, ModelContextLengths: map[string]int{"openai/gpt-4o": 128000}},
+	}
+	if err := cm.Replace(cfg); err != nil {
+		t.Fatal(err)
+	}
+	sysStore, err := logstore.OpenSystem(tmp + "/system.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sysStore.Close()
+	a := &App{Cfg: cm, Client: NewClient(), Logger: logging.New(cm, sysStore)}
+	req := httptest.NewRequest("GET", "/v1/models", nil)
+	rec := httptest.NewRecorder()
+	a.HandleModels(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"context_length":128000`) {
+		t.Fatalf("missing context_length: %s", body)
+	}
+	if strings.Count(body, `"context_length"`) != 1 {
+		t.Fatalf("plain model should omit context_length: %s", body)
+	}
+}
 
 func TestUsageParserStreaming(t *testing.T) {
 	p := &UsageParser{}

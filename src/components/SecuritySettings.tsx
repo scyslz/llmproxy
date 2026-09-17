@@ -32,6 +32,8 @@ export default function SecuritySettings({
   const [logBody, setLogBody] = useState<boolean>(false);
   const [customSizeInput, setCustomSizeInput] = useState<string>("");
   const [requestLogCount, setRequestLogCount] = useState<number | null>(null);
+  const [maxRequestLogs, setMaxRequestLogs] = useState<number>(100000);
+  const [customRequestLogsInput, setCustomRequestLogsInput] = useState<string>("");
   const [logLoading, setLogLoading] = useState(true);
 
   const fetchLogStatusAndSettings = async () => {
@@ -50,6 +52,9 @@ export default function SecuritySettings({
         const setData = await setRes.json();
         setLogDetail(setData.logDetail || "basic");
         setLogBody(setData.logBody === true);
+        if (typeof setData.maxRequestLogs === "number" && setData.maxRequestLogs > 0) {
+          setMaxRequestLogs(setData.maxRequestLogs);
+        }
       }
       if (reqStatsRes && reqStatsRes.ok) {
         const statsData = await reqStatsRes.json();
@@ -79,6 +84,9 @@ export default function SecuritySettings({
           const setData = await setRes.json();
           setLogDetail(setData.logDetail || "basic");
           setLogBody(setData.logBody === true);
+          if (typeof setData.maxRequestLogs === "number" && setData.maxRequestLogs > 0) {
+            setMaxRequestLogs(setData.maxRequestLogs);
+          }
         }
         if (reqStatsRes && reqStatsRes.ok) {
           const statsData = await reqStatsRes.json();
@@ -152,6 +160,26 @@ export default function SecuritySettings({
       await fetchLogStatusAndSettings();
     } catch (err: any) {
       setErrorMsg(err.message || "Failed to clear logs");
+    } finally {
+      setLogActionLoading(false);
+    }
+  };
+
+  const handleSaveMaxRequestLogs = async (n: number) => {
+    if (!Number.isFinite(n) || n <= 0) return;
+    const next = Math.floor(n);
+    try {
+      setLogActionLoading(true);
+      await apiFetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ maxRequestLogs: next })
+      });
+      setMaxRequestLogs(next);
+      setSuccessMsg(`Max request usage records updated to ${next.toLocaleString()}.`);
+      await fetchLogStatusAndSettings();
+    } catch (err: any) {
+      setErrorMsg(err.message || "Failed to update max request logs");
     } finally {
       setLogActionLoading(false);
     }
@@ -516,10 +544,56 @@ export default function SecuritySettings({
               </div>
             </div>
 
+            <div className="space-y-2 pt-2 border-t border-neutral-100">
+              <label className="text-xs font-semibold text-neutral-700 block">Max Request Usage Records:</label>
+              <p className="text-[11px] text-neutral-500">Oldest rows are pruned when the count exceeds this limit. Default 100,000.</p>
+              <div className="flex flex-wrap items-center gap-2">
+                {[10000, 50000, 100000, 200000, 500000].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => {
+                      handleSaveMaxRequestLogs(n);
+                      setCustomRequestLogsInput("");
+                    }}
+                    disabled={logActionLoading || logLoading || maxRequestLogs === n}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                      maxRequestLogs === n
+                        ? "bg-neutral-900 text-white shadow-xs"
+                        : "bg-neutral-100 hover:bg-neutral-200 text-neutral-700 border border-neutral-200"
+                    }`}
+                  >
+                    {n.toLocaleString()}
+                  </button>
+                ))}
+                <div className="flex items-center space-x-1.5 ml-1">
+                  <input
+                    type="number"
+                    min="1"
+                    placeholder="Custom"
+                    value={customRequestLogsInput}
+                    onChange={(e) => setCustomRequestLogsInput(e.target.value)}
+                    className="w-28 px-2.5 py-1.5 bg-white border border-neutral-300 rounded-xl text-xs text-neutral-800 outline-none focus:border-neutral-500 shadow-2xs font-mono"
+                  />
+                  <button
+                    type="button"
+                    disabled={!customRequestLogsInput || isNaN(Number(customRequestLogsInput)) || Number(customRequestLogsInput) <= 0 || logActionLoading}
+                    onClick={() => {
+                      const num = Number(customRequestLogsInput);
+                      if (num > 0) handleSaveMaxRequestLogs(num);
+                    }}
+                    className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-900 text-white rounded-xl text-xs font-semibold disabled:opacity-40 transition-all cursor-pointer"
+                  >
+                    Apply
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <div className="flex items-center justify-end space-x-3 pt-2 border-t border-neutral-100 min-h-[36px]">
               <span className="text-[11px] text-neutral-500 mr-auto min-w-[160px] inline-block">
                 {requestLogCount !== null
-                  ? `${requestLogCount.toLocaleString()} request usage record${requestLogCount === 1 ? "" : "s"}`
+                  ? `${requestLogCount.toLocaleString()} / ${maxRequestLogs.toLocaleString()} request usage record${requestLogCount === 1 ? "" : "s"}`
                   : logLoading ? "…" : ""}
               </span>
               <button

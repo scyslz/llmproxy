@@ -260,7 +260,10 @@ func (m *Manager) HandleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg := m.Cfg.Get()
-	m.Log.Log(logging.LevelInfo, "Settings updated: enableVirtualKey="+btoa(cfg.EnableVirtualKey)+", enableAdminAuth="+btoa(cfg.EnableAdminAuth)+", logDetail="+cfg.LogDetail+", logBody="+btoa(cfg.LogBody)+", maxLogSizeMB="+itoa(cfg.MaxLogSizeMB), "system", "")
+	if body.MaxRequestLogs != nil && *body.MaxRequestLogs > 0 && m.ReqStore != nil {
+		m.ReqStore.SetMax(cfg.MaxRequestLogs)
+	}
+	m.Log.Log(logging.LevelInfo, "Settings updated: enableVirtualKey="+btoa(cfg.EnableVirtualKey)+", enableAdminAuth="+btoa(cfg.EnableAdminAuth)+", logDetail="+cfg.LogDetail+", logBody="+btoa(cfg.LogBody)+", maxLogSizeMB="+itoa(cfg.MaxLogSizeMB)+", maxRequestLogs="+itoa(cfg.MaxRequestLogs), "system", "")
 	writeJSON(w, 200, cfg.ToSettings())
 }
 
@@ -370,8 +373,15 @@ func (m *Manager) HandleUpdateKey(w http.ResponseWriter, r *http.Request, key st
 		writeJSON(w, 404, map[string]string{"error": "Virtual key not found"})
 		return
 	}
-	m.Log.Log(logging.LevelInfo, "Updated virtual key: "+body.Name, "system", "")
-	writeJSON(w, 200, map[string]interface{}{"success": true})
+	cfg := m.Cfg.Get()
+	for _, k := range cfg.Keys {
+		if k.Key == key {
+			m.Log.Log(logging.LevelInfo, "Updated virtual key: "+body.Name, "system", "")
+			writeJSON(w, 200, k)
+			return
+		}
+	}
+	writeJSON(w, 404, map[string]string{"error": "Virtual key not found"})
 }
 
 // --- System Logs ---
@@ -556,6 +566,7 @@ func applyPatch(p *domain.Provider, body map[string]interface{}) {
 	if v, ok := body["defaultModel"].(string); ok {
 		p.DefaultModel = v
 	}
+	modelsPatched := false
 	if v, ok := body["models"]; ok {
 		if arr, ok := v.([]interface{}); ok {
 			models := make([]string, len(arr))
@@ -563,7 +574,31 @@ func applyPatch(p *domain.Provider, body map[string]interface{}) {
 				models[i], _ = x.(string)
 			}
 			p.Models = models
+			modelsPatched = true
 		}
+	}
+	if v, ok := body["modelContextLengths"]; ok {
+		if mp, ok := v.(map[string]interface{}); ok {
+			out := make(map[string]int, len(mp))
+			for k, val := range mp {
+				switch n := val.(type) {
+				case float64:
+					if n > 0 {
+						out[k] = int(n)
+					}
+				}
+			}
+			p.ModelContextLengths = out
+		}
+	}
+	if modelsPatched && len(p.ModelContextLengths) > 0 {
+		keep := make(map[string]int, len(p.Models))
+		for _, m := range p.Models {
+			if n := p.ModelContextLengths[m]; n > 0 {
+				keep[m] = n
+			}
+		}
+		p.ModelContextLengths = keep
 	}
 	if v, ok := body["protocol"].(string); ok {
 		switch v {

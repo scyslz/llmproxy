@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,6 +37,7 @@ func (a *App) HandleModels(w http.ResponseWriter, r *http.Request) {
 
 	cands, _, _ := a.selectCandidates(cfg, apiKey, nil)
 	models := []string{}
+	ctxLens := map[string]int{}
 	seen := map[string]bool{}
 	for _, p := range cands {
 		for _, m := range p.Models {
@@ -43,16 +45,23 @@ func (a *App) HandleModels(w http.ResponseWriter, r *http.Request) {
 				seen[m] = true
 				models = append(models, m)
 			}
+			if n := p.ModelContextLengths[m]; n > 0 && ctxLens[m] == 0 {
+				ctxLens[m] = n
+			}
 		}
 	}
 	data := make([]map[string]interface{}, len(models))
 	for i, m := range models {
-		data[i] = map[string]interface{}{
+		item := map[string]interface{}{
 			"id":       m,
 			"object":   "model",
 			"created":  time.Now().UnixMilli(),
 			"owned_by": "proxy",
 		}
+		if n := ctxLens[m]; n > 0 {
+			item["context_length"] = n
+		}
+		data[i] = item
 	}
 	writeJSON(w, 200, map[string]interface{}{
 		"object": "list",
@@ -489,93 +498,229 @@ fetch:
 		return
 	}
 
-	var raw json.RawMessage
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		writeJSON(w, 500, map[string]string{"error": "Failed to parse upstream response"})
+	infos, err := extractModelsFromReader(resp.Body)
+	if err != nil && len(infos) == 0 {
+		writeJSON(w, 500, map[string]string{"error": "Failed to parse upstream response: " + err.Error()})
 		return
 	}
-	models := extractModels(raw)
+	models := make([]string, 0, len(infos))
+	contextLengths := map[string]int{}
+	for _, info := range infos {
+		models = append(models, info.ID)
+		if info.ContextLength > 0 {
+			contextLengths[info.ID] = info.ContextLength
+		}
+	}
 	a.Logger.Log(logging.LevelInfo, "Successfully fetched "+itoa(len(models))+" models from "+targetURL, "proxy", reqID)
-	writeJSON(w, 200, map[string]interface{}{
+	out := map[string]interface{}{
 		"models": models,
 		"count":  len(models),
 		"url":    targetURL,
-	})
+	}
+	if len(contextLengths) > 0 {
+		out["contextLengths"] = contextLengths
+	}
+	writeJSON(w, 200, out)
 }
 
-func extractModels(raw json.RawMessage) []string {
-	var data struct {
-		Data   []interface{} `json:"data"`
-		Models []interface{} `json:"models"`
+type remoteModelInfo struct {
+	ID            string
+	ContextLength int
+}
+
+const maxModelsBody = 32 << 20
+
+func extractModelsFromReader(r io.Reader) ([]remoteModelInfo, error) {
+	dec := json.NewDecoder(io.LimitReader(r, maxModelsBody))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
 	}
-	if err := json.Unmarshal(raw, &data); err == nil {
-		if len(data.Data) > 0 {
-			return extractIDs(data.Data)
+	switch t := tok.(type) {
+	case json.Delim:
+		if t == '[' {
+			return decodeModelArray(dec, false)
 		}
-		if len(data.Models) > 0 {
-			return extractNames(data.Models)
+		if t == '{' {
+			return decodeModelObject(dec)
 		}
 	}
-	var arr []interface{}
-	if err := json.Unmarshal(raw, &arr); err == nil {
-		return extractIDs(arr)
-	}
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &obj); err == nil {
-		for _, v := range obj {
-			var sub []interface{}
-			if err := json.Unmarshal(v, &sub); err == nil {
-				if ids := extractIDs(sub); len(ids) > 0 {
-					return ids
+	return nil, nil
+}
+
+func decodeModelObject(dec *json.Decoder) ([]remoteModelInfo, error) {
+	var dataIDs, modelsIDs, otherIDs []remoteModelInfo
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		key, _ := keyTok.(string)
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		d, isDelim := tok.(json.Delim)
+		if isDelim && d == '[' {
+			preferName := key == "models"
+			ids, err := decodeModelArray(dec, preferName)
+			if err != nil {
+				return nil, err
+			}
+			switch key {
+			case "data":
+				dataIDs = ids
+			case "models":
+				modelsIDs = ids
+			default:
+				if len(otherIDs) == 0 && len(ids) > 0 {
+					otherIDs = ids
 				}
 			}
+			continue
 		}
-	}
-	return nil
-}
-
-func extractIDs(items []interface{}) []string {
-	out := []string{}
-	seen := map[string]bool{}
-	for _, item := range items {
-		id := ""
-		switch v := item.(type) {
-		case string:
-			id = v
-		case map[string]interface{}:
-			if s, ok := v["id"].(string); ok {
-				id = s
-			} else if s, ok := v["name"].(string); ok {
-				id = s
+		if isDelim {
+			if err := skipDelim(dec, d); err != nil {
+				return nil, err
 			}
 		}
-		if id != "" && !seen[id] {
-			seen[id] = true
-			out = append(out, id)
-		}
 	}
-	return out
+	if _, err := dec.Token(); err != nil && err != io.EOF {
+		return nil, err
+	}
+	if len(dataIDs) > 0 {
+		return dataIDs, nil
+	}
+	if len(modelsIDs) > 0 {
+		return modelsIDs, nil
+	}
+	return otherIDs, nil
 }
 
-func extractNames(items []interface{}) []string {
-	out := []string{}
+func decodeModelArray(dec *json.Decoder, preferName bool) ([]remoteModelInfo, error) {
+	out := []remoteModelInfo{}
 	seen := map[string]bool{}
-	for _, item := range items {
-		name := ""
-		switch v := item.(type) {
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return out, err
+		}
+		switch v := tok.(type) {
 		case string:
-			name = v
-		case map[string]interface{}:
-			if s, ok := v["name"].(string); ok {
-				name = strings.TrimPrefix(s, "models/")
-			} else if s, ok := v["id"].(string); ok {
+			addModelInfo(&out, seen, remoteModelInfo{ID: v})
+		case json.Delim:
+			if v == '{' {
+				id, name, ctxLen, err := decodeIDNameObject(dec)
+				if err != nil {
+					return out, err
+				}
+				chosen := ""
+				if preferName {
+					if name != "" {
+						chosen = strings.TrimPrefix(name, "models/")
+					} else {
+						chosen = id
+					}
+				} else if id != "" {
+					chosen = id
+				} else {
+					chosen = name
+				}
+				addModelInfo(&out, seen, remoteModelInfo{ID: chosen, ContextLength: ctxLen})
+			} else if err := skipDelim(dec, v); err != nil {
+				return out, err
+			}
+		}
+	}
+	if _, err := dec.Token(); err != nil && err != io.EOF {
+		return out, err
+	}
+	return out, nil
+}
+
+func decodeIDNameObject(dec *json.Decoder) (id, name string, ctxLen int, err error) {
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return "", "", 0, err
+		}
+		key, _ := keyTok.(string)
+		tok, err := dec.Token()
+		if err != nil {
+			return "", "", 0, err
+		}
+		if d, ok := tok.(json.Delim); ok {
+			if err := skipDelim(dec, d); err != nil {
+				return "", "", 0, err
+			}
+			continue
+		}
+		switch key {
+		case "id":
+			if s, ok := tok.(string); ok {
+				id = s
+			}
+		case "name":
+			if s, ok := tok.(string); ok {
 				name = s
 			}
-		}
-		if name != "" && !seen[name] {
-			seen[name] = true
-			out = append(out, name)
+		case "context_length", "contextLength", "max_context_length", "max_input_tokens", "inputTokenLimit":
+			if n, ok := jsonNumber(tok); ok && n > ctxLen {
+				ctxLen = n
+			}
 		}
 	}
-	return out
+	if _, err := dec.Token(); err != nil && err != io.EOF {
+		return id, name, ctxLen, err
+	}
+	return id, name, ctxLen, nil
+}
+
+func skipDelim(dec *json.Decoder, open json.Delim) error {
+	for dec.More() {
+		if open == '{' {
+			if _, err := dec.Token(); err != nil {
+				return err
+			}
+		}
+		tok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		if d, ok := tok.(json.Delim); ok {
+			if err := skipDelim(dec, d); err != nil {
+				return err
+			}
+		}
+	}
+	_, err := dec.Token()
+	return err
+}
+
+func addModelInfo(out *[]remoteModelInfo, seen map[string]bool, info remoteModelInfo) {
+	if info.ID == "" || seen[info.ID] {
+		return
+	}
+	seen[info.ID] = true
+	*out = append(*out, info)
+}
+
+func jsonNumber(tok json.Token) (int, bool) {
+	switch n := tok.(type) {
+	case float64:
+		if n > 0 {
+			return int(n), true
+		}
+	case json.Number:
+		v, err := n.Int64()
+		if err == nil && v > 0 {
+			return int(v), true
+		}
+	case string:
+		v, err := strconv.Atoi(n)
+		if err == nil && v > 0 {
+			return v, true
+		}
+	}
+	return 0, false
 }
