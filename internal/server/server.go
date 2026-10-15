@@ -82,6 +82,15 @@ func Run(cfg *config.Manager, sysStore *logstore.SystemStore, reqStore *logstore
 		}
 	})
 
+	// --- Model Context Lookup ---
+	mux.HandleFunc("/api/models/lookup-context", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			http.Error(w, "Method not allowed", 405)
+			return
+		}
+		proxyApp.LookupModelContexts(w, r)
+	})
+
 	// --- Settings ---
 	mux.HandleFunc("/api/settings", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {

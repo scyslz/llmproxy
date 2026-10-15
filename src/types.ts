@@ -14,6 +14,7 @@ export interface Provider {
   // modelProtocols 按 (model) 覆盖 protocol，由 404 探测成功后自动写入。
   modelProtocols?: Record<string, string>;
   modelContextLengths?: Record<string, number>;
+  modelMaxOutputs?: Record<string, number>;
 }
 
 export interface VirtualKey {

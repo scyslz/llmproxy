@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Provider } from "../types";
-import { Layers, Plus, Trash2, Edit2, Play, CheckCircle2, Shield, Eye, EyeOff, Globe, RefreshCw, Search, Check, X } from "lucide-react";
+import { Layers, Plus, Trash2, Edit2, Play, CheckCircle2, Shield, Eye, EyeOff, Globe, RefreshCw, Search, Check, X, Sparkles } from "lucide-react";
 import { apiFetch } from "../lib/api";
 
 interface ProviderCardProps {
@@ -38,6 +38,12 @@ const PRESETS = [
   }
 ];
 
+const formatTokens = (n: number): string => {
+  if (n >= 1000000) return `${(n / 1000000).toFixed(n % 1000000 === 0 ? 0 : 1)}M`;
+  if (n >= 1000) return `${Math.round(n / 1000)}K`;
+  return `${n}`;
+};
+
 export default function ProviderCard({
   providers,
   onEnable,
@@ -57,14 +63,17 @@ export default function ProviderCard({
       responsesEndpoint: "",
       defaultModel: "",
       protocol: "",
-      modelContextLengths: {} as Record<string, number>
+      modelContextLengths: {} as Record<string, number>,
+      modelMaxOutputs: {} as Record<string, number>
   });
   const [showApiKeyId, setShowApiKeyId] = useState<string | null>(null);
   const [showApiKeyForm, setShowApiKeyForm] = useState(false);
 
   // New states for API model fetching and keyword filtering
   const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const [isLookingUpContext, setIsLookingUpContext] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [lookupNote, setLookupNote] = useState<string | null>(null);
   const [modelKeyword, setModelKeyword] = useState("");
   const [availableRemoteModels, setAvailableRemoteModels] = useState<string[]>([]);
   const [cardSearchKeywords, setCardSearchKeywords] = useState<Record<string, string>>({});
@@ -73,7 +82,9 @@ export default function ProviderCard({
 
   const resetModalState = () => {
     setIsFetchingModels(false);
+    setIsLookingUpContext(false);
     setFetchError(null);
+    setLookupNote(null);
     setModelKeyword("");
     setAvailableRemoteModels([]);
   };
@@ -91,7 +102,8 @@ export default function ProviderCard({
         responsesEndpoint: "",
         defaultModel: "",
         protocol: "",
-        modelContextLengths: {}
+        modelContextLengths: {},
+        modelMaxOutputs: {}
     });
   };
 
@@ -108,7 +120,8 @@ export default function ProviderCard({
         responsesEndpoint: p.responsesEndpoint || "",
       defaultModel: p.defaultModel || "",
       protocol: p.protocol || "",
-      modelContextLengths: p.modelContextLengths || {}
+      modelContextLengths: p.modelContextLengths || {},
+      modelMaxOutputs: p.modelMaxOutputs || {}
     });
     setIsEditing(p.id);
   };
@@ -126,7 +139,8 @@ export default function ProviderCard({
         responsesEndpoint: "",
         defaultModel: "",
         protocol: "",
-        modelContextLengths: {}
+        modelContextLengths: {},
+        modelMaxOutputs: {}
     });
     setIsEditing("new");
   };
@@ -163,7 +177,8 @@ export default function ProviderCard({
         setFormData(prev => ({
           ...prev,
           modelsString: merged.join(", "),
-          modelContextLengths: { ...(prev.modelContextLengths || {}), ...incoming }
+          modelContextLengths: { ...(prev.modelContextLengths || {}), ...incoming },
+          modelMaxOutputs: { ...(prev.modelMaxOutputs || {}), ...((data.maxOutputs || {}) as Record<string, number>) }
         }));
       } else {
         setFetchError("No models returned from provider endpoint.");
@@ -173,6 +188,81 @@ export default function ProviderCard({
     } finally {
       setIsFetchingModels(false);
     }
+  };
+
+  const handleAutoLookupContext = async () => {
+    const models = currentSelectedModels;
+    if (models.length === 0) {
+      setFetchError("Add at least one model before looking up context lengths.");
+      return;
+    }
+    setIsLookingUpContext(true);
+    setFetchError(null);
+    setLookupNote(null);
+    try {
+      const llmModel = (formData.defaultModel || models[0] || "").trim();
+      const llm = (formData.baseUrl && formData.apiKey && llmModel)
+        ? { baseUrl: formData.baseUrl, apiKey: formData.apiKey, model: llmModel }
+        : undefined;
+      const res = await apiFetch("/api/models/lookup-context", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ models, useLLM: true, llm })
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || "Failed to look up context lengths");
+      }
+      const incoming = (data.contextLengths || {}) as Record<string, number>;
+      const fallbacks = (data.fallbacks || []) as string[];
+      if (Object.keys(incoming).length === 0) {
+        setLookupNote("No context data available; defaults applied where possible.");
+        return;
+      }
+      setFormData(prev => ({
+        ...prev,
+        modelContextLengths: { ...(prev.modelContextLengths || {}), ...incoming },
+        modelMaxOutputs: { ...(prev.modelMaxOutputs || {}), ...((data.maxOutputs || {}) as Record<string, number>) }
+      }));
+      const notes: string[] = [];
+      if (fallbacks.length > 0) {
+        notes.push(`Default limits applied to: ${fallbacks.join(", ")}`);
+      }
+      if (data.llmError) {
+        notes.push(`LLM lookup unavailable, defaults used instead.`);
+      }
+      if (notes.length > 0) {
+        setLookupNote(notes.join(" | "));
+      }
+    } catch (err: any) {
+      setLookupNote(`Lookup failed (${err.message || "unknown error"}); no values were changed.`);
+    } finally {
+      setIsLookingUpContext(false);
+    }
+  };
+
+  const setModelContextLength = (model: string, value: number) => {
+    setFormData(prev => {
+      const next = { ...(prev.modelContextLengths || {}) };
+      if (value > 0) {
+        next[model] = value;
+      } else {
+        delete next[model];
+      }
+      return { ...prev, modelContextLengths: next };
+    });
+  };
+
+  const setModelMaxOutput = (model: string, value: number) => {
+    setFormData(prev => {
+      const next = { ...(prev.modelMaxOutputs || {}) };
+      if (value > 0) {
+        next[model] = value;
+      } else {
+        delete next[model];
+      }
+      return { ...prev, modelMaxOutputs: next };
+    });
   };
 
   const handleQuickSyncCard = async (p: Provider) => {
@@ -192,6 +282,9 @@ export default function ProviderCard({
         const patch: Partial<Provider> = { models: data.models };
         if (data.contextLengths && Object.keys(data.contextLengths).length > 0) {
           patch.modelContextLengths = data.contextLengths;
+        }
+        if (data.maxOutputs && Object.keys(data.maxOutputs).length > 0) {
+          patch.modelMaxOutputs = data.maxOutputs;
         }
         onUpdate(p.id, patch);
       } else {
@@ -245,9 +338,12 @@ export default function ProviderCard({
     const dm = (formData.defaultModel || "").trim();
     const defaultModel = (dm && models.includes(dm)) ? dm : undefined;
     const modelContextLengths: Record<string, number> = {};
+    const modelMaxOutputs: Record<string, number> = {};
     for (const m of models) {
       const n = formData.modelContextLengths?.[m];
       if (n && n > 0) modelContextLengths[m] = n;
+      const o = formData.modelMaxOutputs?.[m];
+      if (o && o > 0) modelMaxOutputs[m] = o;
     }
 
     const submissionData = {
@@ -261,7 +357,8 @@ export default function ProviderCard({
       responsesEndpoint: (formData.responsesEndpoint || "").trim() || undefined,
       defaultModel,
       protocol: formData.protocol || undefined,
-      modelContextLengths
+      modelContextLengths,
+      modelMaxOutputs
     };
 
     if (isEditing === "new") {
@@ -434,25 +531,42 @@ export default function ProviderCard({
             {/* Model Section with API Fetching & Keyword Filtering */}
             <div className="space-y-3 bg-white border border-neutral-200 rounded-xl p-4 shadow-2xs">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
+                <div className="min-w-0">
                   <label className="text-xs font-bold text-neutral-800 block">Supported Models</label>
                   <p className="text-[11px] text-neutral-500">First model listed will act as the substitution fallback.</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleFetchRemoteModels}
-                  disabled={isFetchingModels || !formData.baseUrl}
-                  className="inline-flex items-center space-x-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 disabled:bg-neutral-300 text-white px-3 py-1.5 rounded-lg shadow-sm transition-colors cursor-pointer"
-                  title="Fetch available models directly from provider API"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isFetchingModels ? "animate-spin" : ""}`} />
-                  <span>{isFetchingModels ? "Fetching API Models..." : "Fetch from Provider API"}</span>
-                </button>
+                <div className="flex flex-nowrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleFetchRemoteModels}
+                    disabled={isFetchingModels || !formData.baseUrl}
+                    className="inline-flex items-center space-x-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 disabled:bg-neutral-300 text-white px-3 py-1.5 rounded-lg shadow-sm transition-colors cursor-pointer whitespace-nowrap"
+                    title="Fetch available models directly from provider API"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isFetchingModels ? "animate-spin" : ""}`} />
+                    <span>{isFetchingModels ? "Fetching..." : "Fetch API"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAutoLookupContext}
+                    disabled={isLookingUpContext || currentSelectedModels.length === 0}
+                    className="inline-flex items-center space-x-1.5 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 disabled:bg-neutral-300 text-white px-3 py-1.5 rounded-lg shadow-sm transition-colors cursor-pointer whitespace-nowrap"
+                    title="Look up each model's max context length: searches a public model database, then asks the model itself for anything missing"
+                  >
+                    <Sparkles className={`w-3.5 h-3.5 ${isLookingUpContext ? "animate-pulse" : ""}`} />
+                    <span>{isLookingUpContext ? "Looking up..." : "Auto Context"}</span>
+                  </button>
+                </div>
               </div>
 
               {fetchError && (
                 <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg p-2.5 font-medium">
                   {fetchError}
+                </div>
+              )}
+              {lookupNote && (
+                <div className="text-xs text-neutral-600 bg-neutral-50 border border-neutral-200 rounded-lg p-2.5">
+                  {lookupNote}
                 </div>
               )}
 
@@ -558,6 +672,62 @@ export default function ProviderCard({
                   ))}
                 </select>
                 <p className="text-[10px] text-neutral-500">Used when a request model is not in the Supported Models list. Leave empty to keep the current first-model behavior.</p>
+              </div>
+
+              {/* Context & Output Limits */}
+              <div className="space-y-2 border-t border-neutral-100 pt-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-neutral-800">Context / Max Output (tokens)</label>
+                  <span className="text-[10px] text-neutral-400">
+                    {currentSelectedModels.filter(m => (formData.modelContextLengths?.[m] || 0) > 0).length}/{currentSelectedModels.length} set
+                  </span>
+                </div>
+                {currentSelectedModels.length === 0 ? (
+                  <p className="text-[10px] text-neutral-400 italic">Add models to set their limits.</p>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-40 overflow-y-auto pr-1">
+                    {currentSelectedModels.map((m) => {
+                      const val = formData.modelContextLengths?.[m] || 0;
+                      const out = formData.modelMaxOutputs?.[m] || 0;
+                      return (
+                        <div key={m} className="flex items-center gap-1.5 bg-neutral-50 border border-neutral-200 rounded-lg px-2 py-1">
+                          <span className="text-[10px] font-mono text-neutral-600 truncate flex-1" title={m}>{m}</span>
+                          {val > 0 && <span className="text-[9px] text-emerald-600 font-semibold shrink-0" title="Context">{formatTokens(val)}</span>}
+                          {out > 0 && <span className="text-[9px] text-sky-600 font-semibold shrink-0" title="Max output">{formatTokens(out)}</span>}
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="ctx"
+                            title="Max context length"
+                            value={val || ""}
+                            onChange={(e) => setModelContextLength(m, parseInt(e.target.value) || 0)}
+                            className="w-16 text-[10px] font-mono text-right bg-white border border-neutral-200 rounded px-1.5 py-0.5 outline-none focus:border-neutral-400"
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="out"
+                            title="Max output tokens"
+                            value={out || ""}
+                            onChange={(e) => setModelMaxOutput(m, parseInt(e.target.value) || 0)}
+                            className="w-16 text-[10px] font-mono text-right bg-white border border-neutral-200 rounded px-1.5 py-0.5 outline-none focus:border-neutral-400"
+                          />
+                          {(val > 0 || out > 0) && (
+                            <button
+                              type="button"
+                              onClick={() => { setModelContextLength(m, 0); setModelMaxOutput(m, 0); }}
+                              className="text-neutral-400 hover:text-red-500 shrink-0 cursor-pointer"
+                              title="Clear limits"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <p className="text-[10px] text-neutral-500">Auto Context searches a public model database by model name, then asks the model itself for anything still missing, and fills the max context window and max output. You can override any value manually.</p>
               </div>
 
             </div>

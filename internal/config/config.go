@@ -146,6 +146,7 @@ type rawProvider struct {
 	ResponsesEndpoint string `json:"responsesEndpoint"`
 	DefaultModel   string   `json:"defaultModel"`
 	ModelContextLengths map[string]int `json:"modelContextLengths,omitempty"`
+	ModelMaxOutputs     map[string]int `json:"modelMaxOutputs,omitempty"`
 	// Legacy/alternate field names kept for compatibility.
 	BaseUrl2 string `json:"base_url"`
 	APIKey2  string `json:"api_key"`
@@ -243,6 +244,7 @@ func (rp rawProvider) toProvider() domain.Provider {
 		ResponsesEndpoint: rp.ResponsesEndpoint,
 		DefaultModel:        orString(rp.DefaultModel, rp.Default2),
 		ModelContextLengths: rp.ModelContextLengths,
+		ModelMaxOutputs:     rp.ModelMaxOutputs,
 	}
 	if rp.Enabled != nil {
 		p.Enabled = *rp.Enabled

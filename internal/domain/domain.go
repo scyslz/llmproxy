@@ -20,6 +20,8 @@ type Provider struct {
 	ModelProtocols map[string]string `json:"modelProtocols,omitempty"`
 	// ModelContextLengths 按 model id 记录上游返回的最大上下文（token）。
 	ModelContextLengths map[string]int `json:"modelContextLengths,omitempty"`
+	// ModelMaxOutputs 按 model id 记录单次最大输出（token）。
+	ModelMaxOutputs map[string]int `json:"modelMaxOutputs,omitempty"`
 }
 
 // VirtualKey maps a client-facing key to a set of authorized providers.

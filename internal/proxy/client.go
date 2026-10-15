@@ -25,6 +25,7 @@ type Provider struct {
 	Protocol            string
 	ModelProtocols      map[string]string
 	ModelContextLengths map[string]int
+	ModelMaxOutputs     map[string]int
 	Timeout             time.Duration
 	Concurrency         int
 }

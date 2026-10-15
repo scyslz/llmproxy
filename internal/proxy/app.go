@@ -85,6 +85,7 @@ func ProviderFromDomain(p *domain.Provider) *Provider {
 		Protocol:            p.Protocol,
 		ModelProtocols:      p.ModelProtocols,
 		ModelContextLengths: p.ModelContextLengths,
+		ModelMaxOutputs:     p.ModelMaxOutputs,
 		Timeout:             time.Duration(p.Timeout) * time.Millisecond,
 		Concurrency:         p.Concurrency,
 	}

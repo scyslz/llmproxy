@@ -591,14 +591,39 @@ func applyPatch(p *domain.Provider, body map[string]interface{}) {
 			p.ModelContextLengths = out
 		}
 	}
-	if modelsPatched && len(p.ModelContextLengths) > 0 {
-		keep := make(map[string]int, len(p.Models))
-		for _, m := range p.Models {
-			if n := p.ModelContextLengths[m]; n > 0 {
-				keep[m] = n
+	if v, ok := body["modelMaxOutputs"]; ok {
+		if mp, ok := v.(map[string]interface{}); ok {
+			out := make(map[string]int, len(mp))
+			for k, val := range mp {
+				switch n := val.(type) {
+				case float64:
+					if n > 0 {
+						out[k] = int(n)
+					}
+				}
 			}
+			p.ModelMaxOutputs = out
 		}
-		p.ModelContextLengths = keep
+	}
+	if modelsPatched {
+		if len(p.ModelContextLengths) > 0 {
+			keep := make(map[string]int, len(p.Models))
+			for _, m := range p.Models {
+				if n := p.ModelContextLengths[m]; n > 0 {
+					keep[m] = n
+				}
+			}
+			p.ModelContextLengths = keep
+		}
+		if len(p.ModelMaxOutputs) > 0 {
+			keep := make(map[string]int, len(p.Models))
+			for _, m := range p.Models {
+				if n := p.ModelMaxOutputs[m]; n > 0 {
+					keep[m] = n
+				}
+			}
+			p.ModelMaxOutputs = keep
+		}
 	}
 	if v, ok := body["protocol"].(string); ok {
 		switch v {

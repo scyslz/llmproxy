@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -145,7 +146,7 @@ func TestHandleModelsIncludesContextLength(t *testing.T) {
 	cfg := testConfig()
 	cfg.EnableVirtualKey = false
 	cfg.Providers = []domain.Provider{
-		{ID: "or", Name: "OR", BaseURL: "http://example", Enabled: true, Models: []string{"openai/gpt-4o", "plain"}, ModelContextLengths: map[string]int{"openai/gpt-4o": 128000}},
+		{ID: "or", Name: "OR", BaseURL: "http://example", Enabled: true, Models: []string{"openai/gpt-4o", "plain", "ctxonly", "outonly"}, ModelContextLengths: map[string]int{"openai/gpt-4o": 128000, "ctxonly": 100000}, ModelMaxOutputs: map[string]int{"openai/gpt-4o": 16384, "outonly": 8192}},
 	}
 	if err := cm.Replace(cfg); err != nil {
 		t.Fatal(err)
@@ -166,8 +167,29 @@ func TestHandleModelsIncludesContextLength(t *testing.T) {
 	if !strings.Contains(body, `"context_length":128000`) {
 		t.Fatalf("missing context_length: %s", body)
 	}
-	if strings.Count(body, `"context_length"`) != 1 {
-		t.Fatalf("plain model should omit context_length: %s", body)
+	if !strings.Contains(body, `"max_output_tokens":16384`) {
+		t.Fatalf("missing max_output_tokens: %s", body)
+	}
+	if !strings.Contains(body, `"limit":{"context":128000,"output":16384}`) {
+		t.Fatalf("missing limit object: %s", body)
+	}
+	if !strings.Contains(body, `"limit":{"context":100000,"output":6250}`) {
+		t.Fatalf("ctxonly missing paired limit: %s", body)
+	}
+	if !strings.Contains(body, `"limit":{"context":131072,"output":8192}`) {
+		t.Fatalf("outonly missing paired limit: %s", body)
+	}
+	if strings.Count(body, `"context_length"`) != 3 {
+		t.Fatalf("ctxonly/outonly should get paired limits, plain omitted: %s", body)
+	}
+	if !strings.Contains(body, `"context_length":100000`) {
+		t.Fatalf("ctxonly missing context_length: %s", body)
+	}
+	if !strings.Contains(body, `"max_output_tokens":6250`) {
+		t.Fatalf("ctxonly missing derived max_output_tokens: %s", body)
+	}
+	if !strings.Contains(body, `"context_length":131072`) {
+		t.Fatalf("outonly missing derived context_length: %s", body)
 	}
 }
 
@@ -492,5 +514,254 @@ func TestGroup_DegradeWithLazyHealth(t *testing.T) {
 	}
 	if s.FailCount != 1 {
 		t.Fatalf("failCount = %d, want 1 (single failure per provider, no double count on probe flip)", s.FailCount)
+	}
+}
+
+func TestLookupModelContexts(t *testing.T) {
+	db := `{
+		"openai": {"models": {
+			"gpt-4o": {"name": "GPT-4o", "limit": {"context": 128000, "output": 16384}},
+			"gpt-4o-mini": {"name": "GPT-4o mini", "limit": {"context": 128000}}
+		}},
+		"anthropic": {"models": {
+			"anthropic/claude-3-5-sonnet-20241022": {"name": "Claude 3.5 Sonnet", "limit": {"context": 200000}}
+		}},
+		"deepseek": {"models": {
+			"deepseek-chat": {"name": "DeepSeek", "limit": {"context": 64000}},
+			"deepseek-v4-pro": {"name": "DeepSeek V4 Pro", "limit": {"context": 1000000}}
+		}}
+	}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(db))
+	}))
+	defer srv.Close()
+
+	oldURL := modelDBURL
+	modelDBURL = srv.URL
+	resetModelDBCache()
+	defer func() {
+		modelDBURL = oldURL
+		resetModelDBCache()
+	}()
+
+	tmp := t.TempDir()
+	cm, err := config.New(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sysStore, err := logstore.OpenSystem(tmp + "/system.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sysStore.Close()
+	a := &App{Cfg: cm, Client: NewClient(), Logger: logging.New(cm, sysStore)}
+
+	req := httptest.NewRequest("POST", "/api/models/lookup-context", bytes.NewReader([]byte(
+		`{"models":["openai/gpt-4o","claude-3-5-sonnet-latest","deepseek-v4-pro","unknown-model","gpt-4o"]}`)))
+	rec := httptest.NewRecorder()
+	a.LookupModelContexts(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+
+	var out struct {
+		ContextLengths map[string]int `json:"contextLengths"`
+		MaxOutputs     map[string]int `json:"maxOutputs"`
+		Matched        int            `json:"matched"`
+		Requested      int            `json:"requested"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Requested != 5 {
+		t.Fatalf("requested = %d, want 5", out.Requested)
+	}
+	if out.Matched != 4 {
+		t.Fatalf("matched = %d, want 4, body = %s", out.Matched, rec.Body.String())
+	}
+	if out.ContextLengths["gpt-4o"] != 128000 {
+		t.Fatalf("gpt-4o = %d, want 128000", out.ContextLengths["gpt-4o"])
+	}
+	if out.ContextLengths["openai/gpt-4o"] != 128000 {
+		t.Fatalf("openai/gpt-4o = %d, want 128000", out.ContextLengths["openai/gpt-4o"])
+	}
+	if out.MaxOutputs["openai/gpt-4o"] != 16384 {
+		t.Fatalf("openai/gpt-4o output = %d, want 16384", out.MaxOutputs["openai/gpt-4o"])
+	}
+	if out.ContextLengths["claude-3-5-sonnet-latest"] != 200000 {
+		t.Fatalf("claude = %d, want 200000", out.ContextLengths["claude-3-5-sonnet-latest"])
+	}
+	if out.ContextLengths["deepseek-v4-pro"] != 1000000 {
+		t.Fatalf("deepseek = %d, want 1000000", out.ContextLengths["deepseek-v4-pro"])
+	}
+	// Default fallback applies to unmatched models
+	if out.ContextLengths["unknown-model"] != defaultContextLength {
+		t.Fatalf("unknown-model = %d, want default %d", out.ContextLengths["unknown-model"], defaultContextLength)
+	}
+	// Output fallback: default context 200000/16 = 12500
+	if out.MaxOutputs["unknown-model"] != 12500 {
+		t.Fatalf("unknown-model output = %d, want 12500", out.MaxOutputs["unknown-model"])
+	}
+	// DB-hit model without output gets fallback from its context
+	if out.MaxOutputs["claude-3-5-sonnet-latest"] != 12500 {
+		t.Fatalf("claude output = %d, want 12500", out.MaxOutputs["claude-3-5-sonnet-latest"])
+	}
+}
+
+func TestLookupModelContextsNoFallback(t *testing.T) {
+	db := `{"openai":{"models":{"gpt-4o":{"limit":{"context":128000}}}}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(db))
+	}))
+	defer srv.Close()
+
+	oldURL := modelDBURL
+	modelDBURL = srv.URL
+	resetModelDBCache()
+	defer func() {
+		modelDBURL = oldURL
+		resetModelDBCache()
+	}()
+
+	tmp := t.TempDir()
+	cm, err := config.New(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sysStore, err := logstore.OpenSystem(tmp + "/system.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sysStore.Close()
+	a := &App{Cfg: cm, Client: NewClient(), Logger: logging.New(cm, sysStore)}
+
+	req := httptest.NewRequest("POST", "/api/models/lookup-context",
+		bytes.NewReader([]byte(`{"models":["gpt-4o","unknown-model"],"useDefault":false}`)))
+	rec := httptest.NewRecorder()
+	a.LookupModelContexts(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		ContextLengths map[string]int `json:"contextLengths"`
+		MaxOutputs map[string]int `json:"maxOutputs"`
+		Fallbacks      []string       `json:"fallbacks"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.ContextLengths["gpt-4o"] != 128000 {
+		t.Fatalf("gpt-4o = %d, want 128000", out.ContextLengths["gpt-4o"])
+	}
+	if _, ok := out.ContextLengths["unknown-model"]; ok {
+		t.Fatalf("unknown-model should be omitted when useDefault=false: %s", rec.Body.String())
+	}
+	if len(out.Fallbacks) != 0 {
+		t.Fatalf("fallbacks = %v, want empty", out.Fallbacks)
+	}
+}
+
+func TestLookupModelContextsViaLLM(t *testing.T) {
+	db := `{"openai":{"models":{"gpt-4o":{"limit":{"context":128000}}}}}`
+	dbSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(db))
+	}))
+	defer dbSrv.Close()
+
+	chatSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer test-key" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		content := "{\"my-private-model\": {\"context\": 64000, \"output\": 8192}}"
+		respBody := map[string]interface{}{}
+		respBody["choices"] = []interface{}{map[string]interface{}{
+			"message": map[string]string{"role": "assistant", "content": content},
+		}}
+		b, _ := json.Marshal(respBody)
+		_, _ = w.Write(b)
+	}))
+	defer chatSrv.Close()
+
+	oldURL := modelDBURL
+	modelDBURL = dbSrv.URL
+	resetModelDBCache()
+	defer func() {
+		modelDBURL = oldURL
+		resetModelDBCache()
+	}()
+
+	tmp := t.TempDir()
+	cm, err := config.New(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sysStore, err := logstore.OpenSystem(tmp + "/system.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sysStore.Close()
+	a := &App{Cfg: cm, Client: NewClient(), Logger: logging.New(cm, sysStore)}
+
+	reqBody := map[string]interface{}{
+		"models": []string{"gpt-4o", "my-private-model"},
+		"useLLM": true,
+		"llm": map[string]string{
+			"baseUrl": chatSrv.URL,
+			"apiKey":  "test-key",
+			"model":   "helper-model",
+		},
+	}
+	raw, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest("POST", "/api/models/lookup-context", bytes.NewReader(raw))
+	rec := httptest.NewRecorder()
+	a.LookupModelContexts(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		ContextLengths map[string]int `json:"contextLengths"`
+		MaxOutputs map[string]int `json:"maxOutputs"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.ContextLengths["gpt-4o"] != 128000 {
+		t.Fatalf("gpt-4o = %d, want 128000 (from db): %s", out.ContextLengths["gpt-4o"], rec.Body.String())
+	}
+	if out.ContextLengths["my-private-model"] != 64000 {
+		t.Fatalf("my-private-model = %d, want 64000 (from llm): %s", out.ContextLengths["my-private-model"], rec.Body.String())
+	}
+	if out.MaxOutputs["my-private-model"] != 8192 {
+		t.Fatalf("my-private-model output = %d, want 8192 (from llm): %s", out.MaxOutputs["my-private-model"], rec.Body.String())
+	}
+}
+
+func TestParseContextLengthsJSON(t *testing.T) {
+	cases := []struct {
+		in   string
+		want map[string]modelLimit
+	}{
+		{"```json\n{\"a\": 1000}\n```", map[string]modelLimit{"a": {Context: 1000}}},
+		{"Sure: {\"b\": \"200000\"} done", map[string]modelLimit{"b": {Context: 200000}}},
+		{"{\"c\": {\"context\": 128000, \"output\": 16384}}", map[string]modelLimit{"c": {Context: 128000, Output: 16384}}},
+		{"no json here", map[string]modelLimit{}},
+	}
+	for _, c := range cases {
+		got := parseContextLengthsJSON(c.in)
+		if len(got) != len(c.want) {
+			t.Fatalf("parse(%q) = %v, want %v", c.in, got, c.want)
+		}
+		for k, v := range c.want {
+			if got[k] != v {
+				t.Fatalf("parse(%q)[%q] = %+v, want %+v", c.in, k, got[k], v)
+			}
+		}
 	}
 }
