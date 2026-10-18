@@ -19,6 +19,22 @@ import (
 	"llmproxy/internal/logstore"
 )
 
+const (
+	scopeChat        = "chat"
+	scopeResponses   = "responses"
+	scopePassthrough = "passthrough"
+)
+
+// isBreakerFailure reports whether an upstream status should trip the circuit
+// breaker. Client errors (400/401/403/404/422...) only degrade the current
+// request; they are usually configuration or request issues, not provider
+// outages. Network errors and timeouts surface as 502/504 and are covered.
+func isBreakerFailure(status int) bool {
+	return status == http.StatusRequestTimeout ||
+		status == http.StatusTooManyRequests ||
+		status >= 500
+}
+
 // App 承载代理转发所需的状态（配置、熔断器、上游客户端、日志、健康状态）。
 type App struct {
 	Cfg     *config.Manager
@@ -47,6 +63,7 @@ type handlerCtx struct {
 	apiKey        string
 	keyName       string
 	reqModel      string
+	upstreamModel string
 	degradedFrom  []string
 	timedOut      bool
 	lastStatus    int
@@ -336,7 +353,8 @@ func (a *App) ProbeChat(ctx context.Context, p *Provider, model string, fromGrou
 		if out.Cancel != nil {
 			out.Cancel()
 		}
-		a.Breaker.RecordSuccess(p.ID)
+		// ProbeChat 是诊断/分组测试路径，不写全局熔断器，避免测试动作
+		// 冷却线上真实流量。
 		if fromGroup && a.Health != nil {
 			a.Health.RecordSuccess(p.ID, out.CandModel)
 		}
@@ -347,7 +365,6 @@ func (a *App) ProbeChat(ctx context.Context, p *Provider, model string, fromGrou
 	if out.ConversionFailed {
 		return false, out.Status, dur, out.Reason
 	}
-	a.Breaker.RecordFailure(p.ID)
 	if fromGroup && a.Health != nil {
 		a.Health.RecordFailure(p.ID, out.CandModel)
 	}
@@ -437,6 +454,8 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 熔断按请求协议分域，chat 与 responses 互不影响。
+	scope := inboundProtocol(h.origPath)
 	for _, p := range cands {
 		// Group 路由: 懒探测冷却判断（provider+model 粒度）
 		if fromGroup && h.reqModel != "" {
@@ -446,10 +465,11 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
-		// circuit breaker（兼容：始终检查，与 group 冷却互不干扰）
-		if a.Breaker.InCooldown(p.ID) {
-			h.degradedFrom = append(h.degradedFrom, p.Name+" (circuit-breaker)")
-			h.proxyLog(a, logging.LevelWarn, "[API Proxy Degrade] Skipping "+p.Name+" (circuit breaker), trying next provider")
+		// 全局熔断只作用于非分组路由；分组路由由 lazyhealth 独立管理，
+		// 避免一次普通请求的失败拖垮整个分组链。
+		if !fromGroup && a.Breaker.InCooldown(p.ID, scope) {
+			h.degradedFrom = append(h.degradedFrom, p.Name+" (circuit-breaker/"+scope+")")
+			h.proxyLog(a, logging.LevelWarn, "[API Proxy Degrade] Skipping "+p.Name+" ("+scope+" circuit breaker), trying next provider")
 			continue
 		}
 
@@ -460,7 +480,9 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if out.Resp != nil {
-			a.Breaker.RecordSuccess(p.ID)
+			if !fromGroup {
+				a.Breaker.RecordSuccess(p.ID, scope)
+			}
 			if fromGroup {
 				a.Health.RecordSuccess(p.ID, out.CandModel)
 			}
@@ -482,7 +504,9 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		a.Breaker.RecordFailure(p.ID)
+		if !fromGroup && isBreakerFailure(out.Status) {
+			a.Breaker.RecordFailure(p.ID, scope)
+		}
 		if fromGroup {
 			a.Health.RecordFailure(p.ID, h.reqModel)
 		}
@@ -525,7 +549,7 @@ func (a *App) handlePassthrough(w http.ResponseWriter, r *http.Request, h *handl
 		if fromGroup && h.reqModel != "" && a.Health.InCooldown(cand.ID, h.reqModel) {
 			continue
 		}
-		if a.Breaker.InCooldown(cand.ID) {
+		if !fromGroup && a.Breaker.InCooldown(cand.ID, scopePassthrough) {
 			continue
 		}
 		p = cand
@@ -590,12 +614,17 @@ func (a *App) handlePassthrough(w http.ResponseWriter, r *http.Request, h *handl
 			return
 		}
 		if timeoutErrState {
+			if !fromGroup {
+				a.Breaker.RecordFailure(p.ID, scopePassthrough)
+			}
 			a.logRequest(h, p.Name, h.reqModel, 504, 0, 0, 0, 0, false, "timeout after "+p.Timeout.String())
 			writeJSON(w, 504, map[string]string{"error": "Upstream timeout: " + p.Name})
 			return
 		}
 		reason := "connection error: " + err.Error()
-		a.Breaker.RecordFailure(p.ID)
+		if !fromGroup {
+			a.Breaker.RecordFailure(p.ID, scopePassthrough)
+		}
 		if fromGroup && h.reqModel != "" {
 			a.Health.RecordFailure(p.ID, h.reqModel)
 		}
@@ -605,7 +634,13 @@ func (a *App) handlePassthrough(w http.ResponseWriter, r *http.Request, h *handl
 	}
 	defer cancel()
 	defer resp.Body.Close()
-	a.Breaker.RecordSuccess(p.ID)
+	if !fromGroup {
+		if isBreakerFailure(resp.StatusCode) {
+			a.Breaker.RecordFailure(p.ID, scopePassthrough)
+		} else {
+			a.Breaker.RecordSuccess(p.ID, scopePassthrough)
+		}
+	}
 	if fromGroup && h.reqModel != "" {
 		a.Health.RecordSuccess(p.ID, h.reqModel)
 	}
@@ -758,6 +793,7 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, h *handlerC
 	var parser UsageParser
 	var body bytes.Buffer
 	resModel := h.reqModel
+	upstreamModel := ""
 	var prompt, completion, cached int
 	var statusOut = resp.StatusCode
 	errMsg := ""
@@ -803,27 +839,22 @@ func (a *App) streamResponse(w http.ResponseWriter, r *http.Request, h *handlerC
 
 	if errMsg == "" {
 		if stream {
-			if parser.Model != "" {
-				resModel = parser.Model
-			}
+			upstreamModel = parser.Model
 			if parser.Usage != nil {
 				prompt = parser.Usage.PromptTokens
 				completion = parser.Usage.CompletionTokens
 				cached = parser.Usage.CachedTokens
 			}
 		} else {
-			var m string
 			if usage, mm := parseUsageJSON(body.Bytes()); usage != nil {
-				m = mm
+				upstreamModel = mm
 				prompt = usage.PromptTokens
 				completion = usage.CompletionTokens
 				cached = usage.CachedTokens
 			}
-			if m != "" {
-				resModel = m
-			}
 		}
 	}
+	h.upstreamModel = upstreamModel
 
 	if h.logBody && h.detailActiveFor(statusOut) && body.Len() > 0 {
 		h.proxyLog(a, logging.LevelInfo, "[API Proxy Response Body] "+body.String())
@@ -904,6 +935,7 @@ func (a *App) logRequest(h *handlerCtx, provider, model string, status int,
 		KeyName:        h.keyName,
 		KeyID:          logging.MaskKey(h.apiKey),
 		Model:          model,
+		UpstreamModel:  h.upstreamModel,
 		Provider:       provider,
 		Path:           h.origPath,
 		Method:         h.method,

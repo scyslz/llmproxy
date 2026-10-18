@@ -76,6 +76,7 @@ export interface RequestLog {
   keyName: string;
   keyId: string;
   model: string;
+  upstreamModel?: string;
   provider: string;
   path: string;
   method: string;

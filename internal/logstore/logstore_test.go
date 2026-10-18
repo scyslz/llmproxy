@@ -226,7 +226,7 @@ func TestRequestStoreCRUDAndStats(t *testing.T) {
 	mk := func(ts int64, id, key, model string, pt, ct, cached int, status int) *RequestLog {
 		return &RequestLog{
 			ID: id, Timestamp: time.UnixMilli(ts).UTC().Format("2006-01-02T15:04:05.000Z"),
-			KeyName: key, Model: model, Provider: "p", PromptTokens: pt, CompletionToks: ct,
+			KeyName: key, Model: model, UpstreamModel: model + "-upstream", Provider: "p", PromptTokens: pt, CompletionToks: ct,
 			CachedTokens: cached, TotalTokens: pt + ct, Status: status, DurationMS: 10,
 			RequestID: "req-" + model,
 		}
@@ -245,6 +245,9 @@ func TestRequestStoreCRUDAndStats(t *testing.T) {
 	// newest first
 	if logs[0].Model != "gpt-4o" {
 		t.Fatalf("newest first wrong: %+v", logs[0])
+	}
+	if logs[0].UpstreamModel != "gpt-4o-upstream" {
+		t.Fatalf("upstream model = %q, want gpt-4o-upstream", logs[0].UpstreamModel)
 	}
 
 	filtered, err := s.Query(QueryFilter{Key: "alice"}, 10, 0)

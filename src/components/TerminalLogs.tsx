@@ -19,6 +19,9 @@ export default function TerminalLogs({ logs, onClear, onRefresh, isPolling, setI
   const [logStatus, setLogStatus] = useState<LogStatus | null>(null);
   const [viewLogs, setViewLogs] = useState<SystemLog[] | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // 只有用户停留在底部时才自动跟随新日志；向上滚动后保持当前位置。
+  const stickToBottomRef = useRef(true);
 
   const fetchStatus = async () => {
     try {
@@ -54,11 +57,20 @@ export default function TerminalLogs({ logs, onClear, onRefresh, isPolling, setI
     return () => { cancelled = true; clearInterval(t); };
   }, [viewRequestId]);
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [logs, levelFilter, categoryFilter]);
-
   const displayLogs = viewRequestId ? (viewLogs ?? []) : logs;
+
+  useEffect(() => {
+    if (stickToBottomRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: "auto", block: "nearest" });
+    }
+  }, [displayLogs, levelFilter, categoryFilter]);
+
+  const handleScroll = () => {
+    const el = bodyRef.current;
+    if (!el) return;
+    // 距底部 48px 内视为“跟随最新”；用户向上翻动后停止自动滚动。
+    stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+  };
 
   const filteredLogs = displayLogs.filter((log) => {
     if (levelFilter !== "all" && log.level !== levelFilter) return false;
@@ -213,7 +225,11 @@ export default function TerminalLogs({ logs, onClear, onRefresh, isPolling, setI
       </div>
 
       {/* Terminal Body */}
-      <div className="p-4 h-[380px] overflow-y-auto space-y-2 scrollbar-thin scrollbar-thumb-neutral-200 bg-neutral-950 text-neutral-100 font-mono text-[11px]">
+      <div
+        ref={bodyRef}
+        onScroll={handleScroll}
+        className="p-4 h-[380px] overflow-y-auto space-y-2 scrollbar-thin scrollbar-thumb-neutral-200 bg-neutral-950 text-neutral-100 font-mono text-[11px]"
+      >
         {filteredLogs.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-neutral-500 space-y-2 font-sans">
             <span className="font-mono font-bold select-none text-neutral-400">[ NO MATCHING LOGS ]</span>

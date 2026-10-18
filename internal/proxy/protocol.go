@@ -174,6 +174,7 @@ func (a *App) transpileResponse(w http.ResponseWriter, r *http.Request, h *handl
 
 	var prompt, completion, cached int
 	resModel := model
+	upstreamModel := ""
 	errMsg := ""
 
 	if !stream {
@@ -185,7 +186,9 @@ func (a *App) transpileResponse(w http.ResponseWriter, r *http.Request, h *handl
 			a.logRequest(h, p.Name, resModel, 502, 0, 0, 0, 0, false, errMsg)
 			return
 		}
+		upstreamModel = extractModelJSON(body)
 		prompt, completion, cached = convertUsageToProxy(usage)
+		h.upstreamModel = upstreamModel
 		_, _ = w.Write(out)
 		a.logRequest(h, p.Name, resModel, res.StatusCode, prompt, completion, cached, prompt+completion, false, "")
 		return
@@ -218,6 +221,9 @@ func (a *App) transpileResponse(w http.ResponseWriter, r *http.Request, h *handl
 				break
 			}
 			continue
+		}
+		if m := extractModelJSON([]byte(dataJSON)); m != "" {
+			upstreamModel = m
 		}
 		chunks := transpileSSEEvent(state, target, dataJSON)
 		for _, c := range chunks {
@@ -257,7 +263,29 @@ func (a *App) transpileResponse(w http.ResponseWriter, r *http.Request, h *handl
 		fl.Flush()
 	}
 	prompt, completion, cached = convertUsageToProxy(usage)
+	h.upstreamModel = upstreamModel
 	a.logRequest(h, p.Name, resModel, res.StatusCode, prompt, completion, cached, prompt+completion, true, errMsg)
+}
+
+// extractModelJSON 从上游响应 JSON/SSE data 中提取真实模型名，
+// 兼容 chat 顶层 model 与 responses 的 response.model 嵌套结构。
+func extractModelJSON(data []byte) string {
+	var obj struct {
+		Model    string `json:"model"`
+		Response *struct {
+			Model string `json:"model"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return ""
+	}
+	if obj.Model != "" {
+		return obj.Model
+	}
+	if obj.Response != nil {
+		return obj.Response.Model
+	}
+	return ""
 }
 
 // convertResponseBody 转写非流式响应体。

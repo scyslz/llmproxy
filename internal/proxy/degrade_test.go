@@ -115,6 +115,12 @@ func TestHandleProxyDegradeLogs(t *testing.T) {
 	if success.Status != 200 {
 		t.Fatalf("success log status = %d, want 200", success.Status)
 	}
+	if success.Model != "m" {
+		t.Fatalf("success log model = %q, want proxy model m", success.Model)
+	}
+	if success.UpstreamModel != "ok-model" {
+		t.Fatalf("success log upstream model = %q, want ok-model", success.UpstreamModel)
+	}
 	if degrade.RequestID == "" {
 		t.Fatal("degrade log has empty request ID")
 	}

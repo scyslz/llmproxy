@@ -226,6 +226,7 @@ export default function RequestLogs({ virtualKeys, providers, onViewLogs }: Requ
                   <th className="py-3 pl-5 pr-3">Time</th>
                   <th className="py-3 px-3">Key</th>
                   <th className="py-3 px-3">Model</th>
+                  <th className="py-3 px-3">Upstream Model</th>
                   <th className="py-3 px-3">Provider</th>
                   <th className="py-3 px-3">Request ID</th>
                   <th className="py-3 px-3 text-right">Read</th>
@@ -250,6 +251,9 @@ export default function RequestLogs({ virtualKeys, providers, onViewLogs }: Requ
                       </span>
                     </td>
                     <td className="py-2.5 px-3 font-mono text-[11px] text-blue-700 whitespace-nowrap">{log.model || "—"}</td>
+                    <td className="py-2.5 px-3 font-mono text-[11px] text-neutral-500 whitespace-nowrap" title="Model actually returned by upstream">
+                      {log.upstreamModel && log.upstreamModel !== log.model ? log.upstreamModel : "—"}
+                    </td>
                     <td className="py-2.5 px-3 text-neutral-600 whitespace-nowrap">{log.provider || "—"}</td>
                     <td className="py-2.5 px-3 whitespace-nowrap">
                       {log.requestId ? (

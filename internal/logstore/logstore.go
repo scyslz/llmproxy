@@ -31,6 +31,7 @@ type RequestLog struct {
 	KeyName        string `json:"keyName"`
 	KeyID          string `json:"keyId"`
 	Model          string `json:"model"`
+	UpstreamModel  string `json:"upstreamModel,omitempty"`
 	Provider       string `json:"provider"`
 	Path           string `json:"path"`
 	Method         string `json:"method"`
@@ -340,6 +341,7 @@ func OpenRequest(path string, max int) (*RequestStore, error) {
 			key_name TEXT,
 			key_id TEXT,
 			model TEXT,
+			upstream_model TEXT,
 			provider TEXT,
 			path TEXT,
 			method TEXT,
@@ -366,6 +368,10 @@ func OpenRequest(path string, max int) (*RequestStore, error) {
 		return nil, err
 	}
 	if err := ensureColumn(db, "request_logs", "has_detail", "has_detail INTEGER NOT NULL DEFAULT 0"); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := ensureColumn(db, "request_logs", "upstream_model", "upstream_model TEXT"); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -399,11 +405,11 @@ func (s *RequestStore) Insert(l *RequestLog) error {
 	}
 	if _, err := s.db.Exec(`
 		INSERT INTO request_logs
-		  (id, time, key_name, key_id, model, provider, path, method,
+		  (id, time, key_name, key_id, model, upstream_model, provider, path, method,
 		   prompt_tokens, completion_tokens, cached_tokens, total_tokens,
 		   status, duration_ms, stream, error, request_id, has_detail)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		l.ID, ts, nullStr(l.KeyName), nullStr(l.KeyID), nullStr(l.Model),
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		l.ID, ts, nullStr(l.KeyName), nullStr(l.KeyID), nullStr(l.Model), nullStr(l.UpstreamModel),
 		nullStr(l.Provider), nullStr(l.Path), nullStr(l.Method),
 		l.PromptTokens, l.CompletionToks, l.CachedTokens, l.TotalTokens,
 		l.Status, l.DurationMS, stream, nullStr(l.Error), nullStr(l.RequestID), detail); err != nil {
@@ -427,7 +433,7 @@ func (s *RequestStore) Query(f QueryFilter, limit, offset int) ([]RequestLog, er
 	defer s.mu.RUnlock()
 	where, args := buildFilters(f)
 	rows, err := s.db.Query(
-		"SELECT id, time, key_name, key_id, model, provider, path, method, "+
+		"SELECT id, time, key_name, key_id, model, upstream_model, provider, path, method, "+
 			"prompt_tokens, completion_tokens, cached_tokens, total_tokens, status, duration_ms, stream, error, request_id, has_detail FROM request_logs"+
 			where+" ORDER BY time DESC LIMIT ? OFFSET ?",
 		append(args, limit, offset)...)
@@ -440,18 +446,19 @@ func (s *RequestStore) Query(f QueryFilter, limit, offset int) ([]RequestLog, er
 		var l RequestLog
 		var t int64
 		var id string
-		var keyName, keyID, model, provider, path, method sql.NullString
+		var keyName, keyID, model, upstreamModel, provider, path, method sql.NullString
 		var pt, ct, cat, tt, dur, stream int
 		var status int
 		var hasDetail int
 		var errCol, rid sql.NullString
-		if err := rows.Scan(&id, &t, &keyName, &keyID, &model, &provider, &path, &method,
+		if err := rows.Scan(&id, &t, &keyName, &keyID, &model, &upstreamModel, &provider, &path, &method,
 			&pt, &ct, &cat, &tt, &status, &dur, &stream, &errCol, &rid, &hasDetail); err != nil {
 			return nil, err
 		}
 		l = RequestLog{
 			ID: id, Timestamp: time.UnixMilli(t).UTC().Format("2006-01-02T15:04:05.000Z"),
-			KeyName: keyName.String, KeyID: keyID.String, Model: model.String, Provider: provider.String,
+			KeyName: keyName.String, KeyID: keyID.String, Model: model.String,
+			UpstreamModel: upstreamModel.String, Provider: provider.String,
 			Path: path.String, Method: method.String, PromptTokens: pt, CompletionToks: ct,
 			CachedTokens: cat, TotalTokens: tt, Status: status, DurationMS: dur,
 			Stream: stream == 1, Error: errCol.String, HasDetail: hasDetail == 1,
