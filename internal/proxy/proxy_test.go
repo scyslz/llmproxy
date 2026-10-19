@@ -19,7 +19,7 @@ import (
 )
 
 func TestExtractModelsOpenRouterShape(t *testing.T) {
-	body := `{"data":[{"id":"openai/gpt-4o","name":"GPT-4o","context_length":128000,"architecture":{"modality":"text->text","input_modalities":["text"]},"pricing":{"prompt":"0.000001"}},{"id":"anthropic/claude-3","name":"Claude 3","context_length":200000}],"total_count":2,"links":{"self":"/api/v1/models"}}`
+	body := `{"data":[{"id":"openai/gpt-4o","name":"GPT-4o","context_length":128000,"max_output_tokens":16384,"architecture":{"modality":"text->text","input_modalities":["text"]},"pricing":{"prompt":"0.000001"}},{"id":"anthropic/claude-3","name":"Claude 3","context_length":200000,"limit":{"context":200000,"output":8192}}],"total_count":2,"links":{"self":"/api/v1/models"}}`
 	ids, err := extractModelsFromReader(strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -29,6 +29,9 @@ func TestExtractModelsOpenRouterShape(t *testing.T) {
 	}
 	if ids[0].ContextLength != 128000 || ids[1].ContextLength != 200000 {
 		t.Fatalf("context = %+v", ids)
+	}
+	if ids[0].MaxOutput != 16384 || ids[1].MaxOutput != 8192 {
+		t.Fatalf("max output = %+v", ids)
 	}
 }
 
@@ -91,7 +94,7 @@ func TestClientDoTimeoutKeepsBodyReadable(t *testing.T) {
 }
 
 func TestFetchRemoteModelsOpenRouterLike(t *testing.T) {
-	payload := []byte(`{"object":"list","data":[{"id":"stealth/union-alpha","name":"Union Alpha","context_length":262144,"architecture":{"modality":"text+image->text"},"pricing":{"prompt":"0"}},{"id":"openai/gpt-4o","name":"GPT-4o","context_length":128000}],"total_count":2}`)
+	payload := []byte(`{"object":"list","data":[{"id":"stealth/union-alpha","name":"Union Alpha","context_length":262144,"max_output_tokens":32768,"architecture":{"modality":"text+image->text"},"pricing":{"prompt":"0"}},{"id":"openai/gpt-4o","name":"GPT-4o","context_length":128000,"limit":{"context":128000,"output":16384}}],"total_count":2}`)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/models" {
 			http.NotFound(w, r)
@@ -134,6 +137,9 @@ func TestFetchRemoteModelsOpenRouterLike(t *testing.T) {
 	}
 	if !strings.Contains(body, `"contextLengths"`) || !strings.Contains(body, "262144") {
 		t.Fatalf("missing contextLengths: %s", body)
+	}
+	if !strings.Contains(body, `"maxOutputs"`) || !strings.Contains(body, "32768") || !strings.Contains(body, "16384") {
+		t.Fatalf("missing maxOutputs: %s", body)
 	}
 }
 

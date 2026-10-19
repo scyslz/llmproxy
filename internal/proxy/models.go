@@ -564,10 +564,14 @@ fetch:
 	}
 	models := make([]string, 0, len(infos))
 	contextLengths := map[string]int{}
+	maxOutputs := map[string]int{}
 	for _, info := range infos {
 		models = append(models, info.ID)
 		if info.ContextLength > 0 {
 			contextLengths[info.ID] = info.ContextLength
+		}
+		if info.MaxOutput > 0 {
+			maxOutputs[info.ID] = info.MaxOutput
 		}
 	}
 	a.Logger.Log(logging.LevelInfo, "Successfully fetched "+itoa(len(models))+" models from "+targetURL, "proxy", reqID)
@@ -579,12 +583,16 @@ fetch:
 	if len(contextLengths) > 0 {
 		out["contextLengths"] = contextLengths
 	}
+	if len(maxOutputs) > 0 {
+		out["maxOutputs"] = maxOutputs
+	}
 	writeJSON(w, 200, out)
 }
 
 type remoteModelInfo struct {
 	ID            string
 	ContextLength int
+	MaxOutput     int
 }
 
 const maxModelsBody = 32 << 20
@@ -669,7 +677,7 @@ func decodeModelArray(dec *json.Decoder, preferName bool) ([]remoteModelInfo, er
 			addModelInfo(&out, seen, remoteModelInfo{ID: v})
 		case json.Delim:
 			if v == '{' {
-				id, name, ctxLen, err := decodeIDNameObject(dec)
+				id, name, ctxLen, maxOut, err := decodeIDNameObject(dec)
 				if err != nil {
 					return out, err
 				}
@@ -685,7 +693,7 @@ func decodeModelArray(dec *json.Decoder, preferName bool) ([]remoteModelInfo, er
 				} else {
 					chosen = name
 				}
-				addModelInfo(&out, seen, remoteModelInfo{ID: chosen, ContextLength: ctxLen})
+				addModelInfo(&out, seen, remoteModelInfo{ID: chosen, ContextLength: ctxLen, MaxOutput: maxOut})
 			} else if err := skipDelim(dec, v); err != nil {
 				return out, err
 			}
@@ -697,20 +705,32 @@ func decodeModelArray(dec *json.Decoder, preferName bool) ([]remoteModelInfo, er
 	return out, nil
 }
 
-func decodeIDNameObject(dec *json.Decoder) (id, name string, ctxLen int, err error) {
+func decodeIDNameObject(dec *json.Decoder) (id, name string, ctxLen, maxOut int, err error) {
 	for dec.More() {
 		keyTok, err := dec.Token()
 		if err != nil {
-			return "", "", 0, err
+			return "", "", 0, 0, err
 		}
 		key, _ := keyTok.(string)
 		tok, err := dec.Token()
 		if err != nil {
-			return "", "", 0, err
+			return "", "", 0, 0, err
 		}
 		if d, ok := tok.(json.Delim); ok {
-			if err := skipDelim(dec, d); err != nil {
-				return "", "", 0, err
+			// opencode V2 / OpenAI 兼容端点把限制放在 limit 对象里。
+			if key == "limit" && d == '{' {
+				ctx, out, err := decodeModelLimitObject(dec)
+				if err != nil {
+					return "", "", 0, 0, err
+				}
+				if ctx > ctxLen {
+					ctxLen = ctx
+				}
+				if out > maxOut {
+					maxOut = out
+				}
+			} else if err := skipDelim(dec, d); err != nil {
+				return "", "", 0, 0, err
 			}
 			continue
 		}
@@ -727,12 +747,51 @@ func decodeIDNameObject(dec *json.Decoder) (id, name string, ctxLen int, err err
 			if n, ok := jsonNumber(tok); ok && n > ctxLen {
 				ctxLen = n
 			}
+		case "max_output_tokens", "max_completion_tokens", "maxOutputTokens", "maxOutput", "outputTokenLimit", "max_tokens":
+			if n, ok := jsonNumber(tok); ok && n > maxOut {
+				maxOut = n
+			}
 		}
 	}
 	if _, err := dec.Token(); err != nil && err != io.EOF {
-		return id, name, ctxLen, err
+		return id, name, ctxLen, maxOut, err
 	}
-	return id, name, ctxLen, nil
+	return id, name, ctxLen, maxOut, nil
+}
+
+// decodeModelLimitObject 读取 {"context": N, "output": M} 形式的限制对象。
+func decodeModelLimitObject(dec *json.Decoder) (ctxLen, maxOut int, err error) {
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return 0, 0, err
+		}
+		key, _ := keyTok.(string)
+		tok, err := dec.Token()
+		if err != nil {
+			return 0, 0, err
+		}
+		if d, ok := tok.(json.Delim); ok {
+			if err := skipDelim(dec, d); err != nil {
+				return 0, 0, err
+			}
+			continue
+		}
+		switch key {
+		case "context":
+			if n, ok := jsonNumber(tok); ok && n > ctxLen {
+				ctxLen = n
+			}
+		case "output":
+			if n, ok := jsonNumber(tok); ok && n > maxOut {
+				maxOut = n
+			}
+		}
+	}
+	if _, err := dec.Token(); err != nil && err != io.EOF {
+		return ctxLen, maxOut, err
+	}
+	return ctxLen, maxOut, nil
 }
 
 func skipDelim(dec *json.Decoder, open json.Delim) error {
