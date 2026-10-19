@@ -179,8 +179,14 @@ func TestHandleModelsIncludesContextLength(t *testing.T) {
 	if !strings.Contains(body, `"limit":{"context":131072,"output":8192}`) {
 		t.Fatalf("outonly missing paired limit: %s", body)
 	}
-	if strings.Count(body, `"context_length"`) != 3 {
-		t.Fatalf("ctxonly/outonly should get paired limits, plain omitted: %s", body)
+	if strings.Count(body, `"context_length"`) != 4 {
+		t.Fatalf("auto/ctxonly/outonly should get paired limits, plain omitted: %s", body)
+	}
+	if !strings.Contains(body, `"id":"auto"`) {
+		t.Fatalf("missing auto model: %s", body)
+	}
+	if !strings.Contains(body, `"limit":{"context":128000,"output":16384}`) {
+		t.Fatalf("auto missing default-model limit: %s", body)
 	}
 	if !strings.Contains(body, `"context_length":100000`) {
 		t.Fatalf("ctxonly missing context_length: %s", body)
@@ -190,6 +196,59 @@ func TestHandleModelsIncludesContextLength(t *testing.T) {
 	}
 	if !strings.Contains(body, `"context_length":131072`) {
 		t.Fatalf("outonly missing derived context_length: %s", body)
+	}
+}
+
+func TestHandleModelsAutoUsesDefaultModelLimits(t *testing.T) {
+	tmp := t.TempDir()
+	cm, err := config.New(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := testConfig()
+	cfg.EnableVirtualKey = false
+	cfg.Providers = []domain.Provider{
+		{
+			ID: "p1", Name: "P1", BaseURL: "http://example", Enabled: true,
+			Models:              []string{"first", "preferred"},
+			DefaultModel:        "preferred",
+			ModelContextLengths: map[string]int{"first": 100000, "preferred": 200000},
+			ModelMaxOutputs:     map[string]int{"first": 8000, "preferred": 16000},
+		},
+	}
+	if err := cm.Replace(cfg); err != nil {
+		t.Fatal(err)
+	}
+	sysStore, err := logstore.OpenSystem(tmp + "/system.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sysStore.Close()
+	a := &App{Cfg: cm, Client: NewClient(), Logger: logging.New(cm, sysStore)}
+	req := httptest.NewRequest("GET", "/v1/models", nil)
+	rec := httptest.NewRecorder()
+	a.HandleModels(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Data []struct {
+			ID    string `json:"id"`
+			Limit struct {
+				Context int `json:"context"`
+				Output  int `json:"output"`
+			} `json:"limit"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Data) == 0 || resp.Data[0].ID != "auto" {
+		t.Fatalf("auto should be the first model: %+v", resp.Data)
+	}
+	if resp.Data[0].Limit.Context != 200000 || resp.Data[0].Limit.Output != 16000 {
+		t.Fatalf("auto limit = %+v, want default model 200000/16000", resp.Data[0].Limit)
 	}
 }
 
@@ -645,7 +704,7 @@ func TestLookupModelContextsNoFallback(t *testing.T) {
 	}
 	var out struct {
 		ContextLengths map[string]int `json:"contextLengths"`
-		MaxOutputs map[string]int `json:"maxOutputs"`
+		MaxOutputs     map[string]int `json:"maxOutputs"`
 		Fallbacks      []string       `json:"fallbacks"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
@@ -727,7 +786,7 @@ func TestLookupModelContextsViaLLM(t *testing.T) {
 	}
 	var out struct {
 		ContextLengths map[string]int `json:"contextLengths"`
-		MaxOutputs map[string]int `json:"maxOutputs"`
+		MaxOutputs     map[string]int `json:"maxOutputs"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)

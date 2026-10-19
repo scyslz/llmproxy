@@ -58,18 +58,54 @@ func (a *App) HandleModels(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	data := make([]map[string]interface{}, len(models))
-	for i, m := range models {
-		item := map[string]interface{}{
-			"id":       m,
-			"object":   "model",
-			"created":  time.Now().UnixMilli(),
-			"owned_by": "proxy",
+	now := time.Now().UnixMilli()
+	data := make([]map[string]interface{}, 0, len(models)+1)
+	// auto 是代理的模型别名：请求方未指定具体模型时，由每个 provider 的
+	// defaultModel（缺省为 models[0]）兜底。这里把它暴露给客户端，并按
+	// 首选候选的兜底模型补齐上下文/输出限制。
+	if !seen["auto"] {
+		autoCtx, autoOut := autoModelLimits(cands)
+		data = append(data, modelItem("auto", autoCtx, autoOut, now))
+	}
+	for _, m := range models {
+		data = append(data, modelItem(m, ctxLens[m], maxOuts[m], now))
+	}
+	writeJSON(w, 200, map[string]interface{}{
+		"object": "list",
+		"data":   data,
+	})
+}
+
+// autoModelLimits 返回 auto 别名对应模型的上下文/输出限制。
+// 请求中的 auto 会先落到首个候选 provider 的 defaultModel（或 models[0]）；
+// 若该 provider 未配置限制，继续向后寻找，避免客户端拿到空限制。
+func autoModelLimits(cands []*Provider) (int, int) {
+	for _, p := range cands {
+		target := p.DefaultModel
+		if target == "" && len(p.Models) > 0 {
+			target = p.Models[0]
 		}
+		if target == "" {
+			continue
+		}
+		ctxLen := p.ModelContextLengths[target]
+		outLen := p.ModelMaxOutputs[target]
+		if ctxLen > 0 || outLen > 0 {
+			return ctxLen, outLen
+		}
+	}
+	return 0, 0
+}
+
+func modelItem(id string, ctxLen, outLen int, created int64) map[string]interface{} {
+	item := map[string]interface{}{
+		"id":       id,
+		"object":   "model",
+		"created":  created,
+		"owned_by": "proxy",
+	}
 	// opencode V2 要求 limit 必须同时包含 context 和 output，
 	// 缺任一项时按比例补齐，保证两个字段要么同时出现，要么同时省略。
-	ctxLen := ctxLens[m]
-	outLen := maxOuts[m]
 	if ctxLen > 0 && outLen <= 0 {
 		outLen = defaultMaxOutput(ctxLen)
 	}
@@ -81,12 +117,7 @@ func (a *App) HandleModels(w http.ResponseWriter, r *http.Request) {
 		item["context_length"] = ctxLen
 		item["max_output_tokens"] = outLen
 	}
-		data[i] = item
-	}
-	writeJSON(w, 200, map[string]interface{}{
-		"object": "list",
-		"data":   data,
-	})
+	return item
 }
 
 // HandleDirectChat 处理 Playground 直连测试（POST /api/providers/:id/chat/completions）。
@@ -794,11 +825,11 @@ func defaultMaxOutput(ctx int) int {
 // 仅返回命中项；命中数量可能少于请求数量。
 func (a *App) LookupModelContexts(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Models  []string   `json:"models"`
-		UseLLM  bool       `json:"useLLM"`
-		UseDef  *bool      `json:"useDefault"`
-		Fallback int       `json:"fallback"`
-		LLM     *llmLookup `json:"llm"`
+		Models   []string   `json:"models"`
+		UseLLM   bool       `json:"useLLM"`
+		UseDef   *bool      `json:"useDefault"`
+		Fallback int        `json:"fallback"`
+		LLM      *llmLookup `json:"llm"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, 400, map[string]string{"error": "Invalid request body"})
