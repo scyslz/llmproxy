@@ -268,8 +268,17 @@ func (a *App) transpileResponse(w http.ResponseWriter, r *http.Request, h *handl
 }
 
 // extractModelJSON 从上游响应 JSON/SSE data 中提取真实模型名，
-// 兼容 chat 顶层 model 与 responses 的 response.model 嵌套结构。
+// 兼容 chat 顶层 model 与 responses 的 response.model 嵌套结构，
+// 以及 {"Type":...,"Payload":...} 的网关信封。
 func extractModelJSON(data []byte) string {
+	var envelope struct {
+		Payload json.RawMessage `json:"Payload"`
+	}
+	if err := json.Unmarshal(data, &envelope); err == nil {
+		if payload := bytes.TrimSpace(envelope.Payload); len(payload) > 0 && payload[0] == '{' {
+			return extractModelJSON(payload)
+		}
+	}
 	var obj struct {
 		Model    string `json:"model"`
 		Response *struct {

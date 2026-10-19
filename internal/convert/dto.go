@@ -7,6 +7,7 @@
 package convert
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 )
@@ -644,6 +645,33 @@ type ResponsesStreamResponse struct {
 	SummaryIndex *int                           `json:"summary_index,omitempty"`
 	ItemID       string                         `json:"item_id,omitempty"`
 	Part         *ResponsesReasoningSummaryPart `json:"part,omitempty"`
+}
+
+// UnmarshalJSON 兼容部分网关把终态事件套了一层
+// {"Type":"response.completed","Payload":{...}} 的非标准信封。
+// 这类信封会导致事件 type/usage 全部丢失（日志里 cached/token 恒为 0），
+// 这里自动解包为正常事件结构；标准事件不受影响。
+func (r *ResponsesStreamResponse) UnmarshalJSON(data []byte) error {
+	var probe struct {
+		Payload json.RawMessage `json:"Payload"`
+	}
+	_ = json.Unmarshal(data, &probe)
+	if payload := bytes.TrimSpace(probe.Payload); len(payload) > 0 && payload[0] == '{' {
+		type plain ResponsesStreamResponse
+		var inner plain
+		if err := json.Unmarshal(payload, &inner); err != nil {
+			return err
+		}
+		*r = ResponsesStreamResponse(inner)
+		return nil
+	}
+	type plain ResponsesStreamResponse
+	var v plain
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	*r = ResponsesStreamResponse(v)
+	return nil
 }
 
 // Error 是上游返回的错误对象的最小子集。

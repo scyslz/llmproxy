@@ -211,3 +211,43 @@ func TestResponsesRequestRejectsStatefulFields(t *testing.T) {
 		t.Errorf("expected error for previous_response_id")
 	}
 }
+
+// TestResponsesStreamEnvelopeUnwrap 复现部分网关把终态事件套成
+// {"Type":"response.completed","Payload":{...}} 的情况：必须解包后
+// 才能拿到 response.usage，否则 cached/token 恒为 0。
+func TestResponsesStreamEnvelopeUnwrap(t *testing.T) {
+	raw := `{"Type":"response.completed","Payload":{"type":"response.completed","response":{"id":"r1","model":"deepseek","usage":{"input_tokens":5236,"output_tokens":16,"total_tokens":5252,"prompt_tokens_details":{"cached_tokens":0},"input_tokens_details":{"cached_tokens":4992}}}}}`
+	var event ResponsesStreamResponse
+	if err := json.Unmarshal([]byte(raw), &event); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if event.Type != responsesEventCompleted {
+		t.Fatalf("type = %q, want %q", event.Type, responsesEventCompleted)
+	}
+	if event.Response == nil || event.Response.Usage == nil {
+		t.Fatalf("usage missing after unwrap: %+v", event.Response)
+	}
+
+	state := NewResponsesToChatStreamState("r1", true)
+	if _, err := ResponsesStreamEventToChatChunks(&event, state); err != nil {
+		t.Fatalf("event: %v", err)
+	}
+	if state.Usage == nil || state.Usage.PromptTokens != 5236 || state.Usage.CompletionTokens != 16 {
+		t.Fatalf("usage wrong: %+v", state.Usage)
+	}
+	if state.Usage.PromptTokensDetails.CachedTokens != 4992 {
+		t.Fatalf("cached = %d, want 4992", state.Usage.PromptTokensDetails.CachedTokens)
+	}
+}
+
+// TestResponsesStreamStandardEventStillParses 保证解包逻辑不影响标准事件。
+func TestResponsesStreamStandardEventStillParses(t *testing.T) {
+	raw := `{"type":"response.completed","response":{"id":"r1","model":"m","usage":{"input_tokens":10,"output_tokens":2,"input_tokens_details":{"cached_tokens":4}}}}`
+	var event ResponsesStreamResponse
+	if err := json.Unmarshal([]byte(raw), &event); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if event.Type != responsesEventCompleted || event.Response == nil || event.Response.Usage == nil {
+		t.Fatalf("standard event broken: %+v", event)
+	}
+}

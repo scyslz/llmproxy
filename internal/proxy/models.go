@@ -121,6 +121,7 @@ func (a *App) HandleDirectChat(w http.ResponseWriter, r *http.Request, providerI
 		method:    r.Method,
 		requestID: reqID,
 		logDetail: logDetail,
+		userAgent: r.Header.Get("User-Agent"),
 	}
 	directLog("info", "[Provider Test] "+p.Name+" chat completions initiated")
 
@@ -166,6 +167,9 @@ func (a *App) HandleDirectChat(w http.ResponseWriter, r *http.Request, providerI
 	hdr.Set("Content-Type", "application/json")
 	if p.APIKey != "" {
 		hdr.Set("Authorization", "Bearer "+p.APIKey)
+	}
+	if h.userAgent != "" {
+		hdr.Set("User-Agent", h.userAgent)
 	}
 	if logDetail == "all" {
 		a.Logger.Log(logging.LevelInfo, "[Provider Test Request Headers] "+formatHeaders(hdr), "proxy", reqID)
@@ -296,6 +300,7 @@ func (a *App) HandleDirectResponses(w http.ResponseWriter, r *http.Request, prov
 		method:    r.Method,
 		requestID: reqID,
 		logDetail: logDetail,
+		userAgent: r.Header.Get("User-Agent"),
 	}
 	directLog("info", "[Provider Test] "+p.Name+" responses initiated")
 
@@ -320,6 +325,9 @@ func (a *App) HandleDirectResponses(w http.ResponseWriter, r *http.Request, prov
 	hdr.Set("Content-Type", "application/json")
 	if p.APIKey != "" {
 		hdr.Set("Authorization", "Bearer "+p.APIKey)
+	}
+	if h.userAgent != "" {
+		hdr.Set("User-Agent", h.userAgent)
 	}
 	if logDetail == "all" {
 		a.Logger.Log(logging.LevelInfo, "[Provider Test Request Headers] "+formatHeaders(hdr), "proxy", reqID)

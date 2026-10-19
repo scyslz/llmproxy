@@ -64,6 +64,7 @@ type handlerCtx struct {
 	keyName       string
 	reqModel      string
 	upstreamModel string
+	userAgent     string
 	degradedFrom  []string
 	timedOut      bool
 	lastStatus    int
@@ -385,6 +386,7 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 		requestID: ShortID(),
 		cfg:       a.Cfg.Get(),
 		apiKey:    auth.ExtractBearer(r.Header.Get("Authorization")),
+		userAgent: r.Header.Get("User-Agent"),
 	}
 	h.logDetail = orDefault(h.cfg.LogDetail, "basic")
 	h.logBody = h.cfg.LogBody
@@ -707,6 +709,9 @@ func (a *App) forwardOnce(h *handlerCtx, p *Provider, candBody map[string]interf
 	if p.APIKey != "" {
 		hdr.Set("Authorization", "Bearer "+p.APIKey)
 	}
+	if h.userAgent != "" {
+		hdr.Set("User-Agent", h.userAgent)
+	}
 	if h.logDetail == "all" {
 		h.proxyLog(a, logging.LevelInfo, "[API Proxy Request Headers] "+formatHeaders(hdr))
 	}
@@ -909,12 +914,12 @@ func parseUsageJSON(data []byte) (*Usage, string) {
 	switch {
 	case obj.Usage.Details != nil && obj.Usage.Details.CachedTokens > 0:
 		u.CachedTokens = obj.Usage.Details.CachedTokens
+	case obj.Usage.InputDetails != nil && obj.Usage.InputDetails.CachedTokens > 0:
+		u.CachedTokens = obj.Usage.InputDetails.CachedTokens
 	case obj.Usage.CacheHitTokens > 0:
 		u.CachedTokens = obj.Usage.CacheHitTokens
 	case obj.Usage.CachedTokens > 0:
 		u.CachedTokens = obj.Usage.CachedTokens
-	case obj.Usage.InputDetails != nil && obj.Usage.InputDetails.CachedTokens > 0:
-		u.CachedTokens = obj.Usage.InputDetails.CachedTokens
 	}
 	return u, obj.Model
 }

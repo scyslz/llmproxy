@@ -123,6 +123,14 @@ func (p *UsageParser) Push(text string) {
 		if err := json.Unmarshal([]byte(data), &raw); err != nil {
 			continue
 		}
+		// 部分网关把终态事件套成 {"Type":"response.completed","Payload":{...}}，
+		// 这里解包后再取 model/usage，否则用量会一直记为 0。
+		if payload, ok := raw["Payload"]; ok {
+			var inner map[string]json.RawMessage
+			if json.Unmarshal(payload, &inner) == nil && len(inner) > 0 {
+				raw = inner
+			}
+		}
 		if v, ok := raw["model"]; ok {
 			var m string
 			if json.Unmarshal(v, &m) == nil && m != "" {
@@ -169,15 +177,17 @@ func (p *UsageParser) Push(text string) {
 		pt := u.PromptTokens
 		ct := u.CompletionTokens
 		cached := 0
+		// 优先取明细里非零的值：部分网关会在 prompt_tokens_details 里
+		// 固定填 0，真正的命中数在 input_tokens_details 里。
 		switch {
 		case u.Details != nil && u.Details.CachedTokens > 0:
 			cached = u.Details.CachedTokens
+		case u.InputDetails != nil && u.InputDetails.CachedTokens > 0:
+			cached = u.InputDetails.CachedTokens
 		case u.CacheHitTokens > 0:
 			cached = u.CacheHitTokens
 		case u.CachedTokens > 0:
 			cached = u.CachedTokens
-		case u.InputDetails != nil && u.InputDetails.CachedTokens > 0:
-			cached = u.InputDetails.CachedTokens
 		}
 		if pt == 0 && u.InputTokens > 0 {
 			pt = u.InputTokens
