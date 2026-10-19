@@ -167,7 +167,7 @@ func TestResponsesStreamToChat(t *testing.T) {
 	chunks = append(chunks, c...)
 
 	delta := &ResponsesStreamResponse{
-		Type: responsesEventOutputTextDelta,
+		Type:  responsesEventOutputTextDelta,
 		Delta: "Hi",
 	}
 	c, _ = ResponsesStreamEventToChatChunks(delta, state)
@@ -237,6 +237,41 @@ func TestResponsesStreamEnvelopeUnwrap(t *testing.T) {
 	}
 	if state.Usage.PromptTokensDetails.CachedTokens != 4992 {
 		t.Fatalf("cached = %d, want 4992", state.Usage.PromptTokensDetails.CachedTokens)
+	}
+}
+
+// TestUsageFromChatUsageCached 覆盖 chat->responses 转写时的缓存命中映射：
+// 标准网关放在 prompt_tokens_details，DeepSeek 风格放在 prompt_cache_hit_tokens。
+func TestUsageFromChatUsageCached(t *testing.T) {
+	standard := &Usage{PromptTokens: 10, CompletionTokens: 2, PromptTokensDetails: InputTokenDetails{CachedTokens: 7}}
+	if u := UsageFromChatUsage(standard); u.InputTokensDetails == nil || u.InputTokensDetails.CachedTokens != 7 {
+		t.Fatalf("standard cached = %+v, want 7", u.InputTokensDetails)
+	}
+
+	deepseek := &Usage{PromptTokens: 10, CompletionTokens: 2, PromptCacheHitTokens: 6}
+	if u := UsageFromChatUsage(deepseek); u.InputTokensDetails == nil || u.InputTokensDetails.CachedTokens != 6 {
+		t.Fatalf("deepseek cached = %+v, want 6", u.InputTokensDetails)
+	}
+}
+
+// TestUsageFromResponsesUsageCached 覆盖 responses->chat 转写时的缓存命中映射，
+// 包括只返回 prompt_tokens_details 或 prompt_cache_hit_tokens 的非标准网关。
+func TestUsageFromResponsesUsageCached(t *testing.T) {
+	cases := []struct {
+		name string
+		src  *Usage
+		want int
+	}{
+		{name: "input details", src: &Usage{InputTokensDetails: &InputTokenDetails{CachedTokens: 9}}, want: 9},
+		{name: "prompt details fallback", src: &Usage{PromptTokensDetails: InputTokenDetails{CachedTokens: 8}}, want: 8},
+		{name: "deepseek top-level", src: &Usage{PromptCacheHitTokens: 7}, want: 7},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if u := UsageFromResponsesUsage(tc.src); u.PromptTokensDetails.CachedTokens != tc.want {
+				t.Fatalf("cached = %d, want %d", u.PromptTokensDetails.CachedTokens, tc.want)
+			}
+		})
 	}
 }
 

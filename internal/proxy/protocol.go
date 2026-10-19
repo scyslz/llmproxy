@@ -149,7 +149,15 @@ func convertUsageToProxy(u *convert.Usage) (prompt, completion, cached int) {
 	if completion == 0 {
 		completion = u.OutputTokens
 	}
+	// chat->responses 转写时缓存命中数落在 InputTokensDetails 里；
+	// DeepSeek 兼容网关则可能只返回顶层 prompt_cache_hit_tokens。
 	cached = u.PromptTokensDetails.CachedTokens
+	if cached == 0 && u.InputTokensDetails != nil {
+		cached = u.InputTokensDetails.CachedTokens
+	}
+	if cached == 0 {
+		cached = u.PromptCacheHitTokens
+	}
 	return prompt, completion, cached
 }
 

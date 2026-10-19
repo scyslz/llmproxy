@@ -115,8 +115,13 @@ func UsageFromChatUsage(src *Usage) *Usage {
 		src.PromptTokensDetails.AudioTokens != 0 ||
 		src.PromptTokensDetails.CachedCreationTokens != 0 ||
 		src.PromptTokensDetails.CacheWriteTokens != 0 ||
-		src.PromptTokensDetails.TextTokens != 0 {
+		src.PromptTokensDetails.TextTokens != 0 ||
+		src.PromptCacheHitTokens != 0 {
 		details := src.PromptTokensDetails
+		if details.CachedTokens == 0 {
+			// DeepSeek 风格的上游把命中数放在 usage.prompt_cache_hit_tokens。
+			details.CachedTokens = src.PromptCacheHitTokens
+		}
 		usage.InputTokensDetails = &details
 	}
 	if src.CompletionTokenDetails.ReasoningTokens != 0 ||

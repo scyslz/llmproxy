@@ -133,6 +133,16 @@ func UsageFromResponsesUsage(src *Usage) *Usage {
 		usage.PromptTokensDetails.ImageTokens = src.InputTokensDetails.ImageTokens
 		usage.PromptTokensDetails.AudioTokens = src.InputTokensDetails.AudioTokens
 	}
+	// 兼容非标准 responses usage：有的网关把缓存命中数放在
+	// prompt_tokens_details，或直接用 DeepSeek 风格的 prompt_cache_hit_tokens。
+	if usage.PromptTokensDetails.CachedTokens == 0 {
+		switch {
+		case src.PromptTokensDetails.CachedTokens > 0:
+			usage.PromptTokensDetails.CachedTokens = src.PromptTokensDetails.CachedTokens
+		case src.PromptCacheHitTokens > 0:
+			usage.PromptTokensDetails.CachedTokens = src.PromptCacheHitTokens
+		}
+	}
 	if src.CompletionTokenDetails.ReasoningTokens != 0 ||
 		src.CompletionTokenDetails.TextTokens != 0 ||
 		src.CompletionTokenDetails.AudioTokens != 0 ||
