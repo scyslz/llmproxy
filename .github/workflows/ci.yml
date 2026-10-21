@@ -1,0 +1,170 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch / Tag / Commit"
+        required: false
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+      IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/llmproxy
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Lint frontend
+        run: npm run lint
+
+      - name: Run Go tests
+        run: go test ./...
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Build Go binaries
+        run: |
+          mkdir -p dist .ci/linux/amd64 .ci/linux/arm64
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -trimpath -ldflags="-s -w" \
+            -o dist/llmproxy ./cmd/llmproxy/...
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+            go build -trimpath -ldflags="-s -w" \
+            -o dist/llmproxy-arm64 ./cmd/llmproxy/...
+          cp dist/llmproxy .ci/linux/amd64/llmproxy
+          cp dist/llmproxy-arm64 .ci/linux/arm64/llmproxy
+          chmod +x dist/llmproxy dist/llmproxy-arm64 \
+            .ci/linux/amd64/llmproxy .ci/linux/arm64/llmproxy
+
+      - name: Verify binary architecture
+        run: file dist/llmproxy dist/llmproxy-arm64
+
+      - name: Upload amd64 binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: llmproxy
+          path: dist/llmproxy
+          if-no-files-found: error
+
+      - name: Upload arm64 binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: llmproxy-arm64
+          path: dist/llmproxy-arm64
+          if-no-files-found: error
+
+      - name: Set up QEMU
+        if: env.DOCKER_PASSWORD != ''
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        if: env.DOCKER_PASSWORD != ''
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        if: env.DOCKER_PASSWORD != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKER_USERNAME }}
+          password: ${{ env.DOCKER_PASSWORD }}
+
+      - name: Generate tags
+        if: env.DOCKER_PASSWORD != ''
+        id: meta
+        shell: bash
+        run: |
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          TAGS="${IMAGE_NAME}:sha-${SHORT_SHA}"
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VER="${{ github.ref_name }}"
+            VER="${VER#v}"
+            TAGS="$TAGS,${IMAGE_NAME}:${VER}"
+          fi
+          TAGS="$TAGS,${IMAGE_NAME}:latest"
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+          echo "Tags:"
+          echo "${TAGS}" | tr ',' '\n'
+
+      - name: Build and push Docker image
+        if: env.DOCKER_PASSWORD != '' && github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: from-prebuilt
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - uses: actions/download-artifact@v4
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p assets staging/amd64/config staging/arm64/config
+          cp llmproxy/llmproxy staging/amd64/
+          cp llmproxy-arm64/llmproxy-arm64 staging/arm64/
+          cp start.sh staging/amd64/start.sh
+          cp start.sh staging/arm64/start.sh
+          cp config/config.json staging/amd64/config/config.json
+          cp config/config.json staging/arm64/config/config.json
+          chmod +x staging/amd64/llmproxy staging/arm64/llmproxy-arm64 staging/amd64/start.sh staging/arm64/start.sh
+          tar czf assets/llmproxy-linux-amd64.tar.gz -C staging/amd64 .
+          tar czf assets/llmproxy-linux-arm64.tar.gz -C staging/arm64 .
+
+      - name: Upload release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            assets/llmproxy-linux-amd64.tar.gz
+            assets/llmproxy-linux-arm64.tar.gz
