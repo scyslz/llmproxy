@@ -8,6 +8,7 @@
   "maxLogSizeMB": 2,
   "maxRequestLogs": 100000,
   "activeLogFile": 1,
+  "maxRequestBodyMB": 10,
   "providers": [
     {
       "id": "mock",

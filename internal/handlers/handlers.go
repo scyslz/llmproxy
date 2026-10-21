@@ -220,6 +220,7 @@ func (m *Manager) HandleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		LogBody          *bool   `json:"logBody"`
 		MaxLogSizeMB     *int    `json:"maxLogSizeMB"`
 		MaxRequestLogs   *int    `json:"maxRequestLogs"`
+		MaxRequestBodyMB *int    `json:"maxRequestBodyMB"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, 400, map[string]string{"error": "Invalid request body"})
@@ -255,6 +256,9 @@ func (m *Manager) HandleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		if body.MaxRequestLogs != nil && *body.MaxRequestLogs > 0 {
 			c.MaxRequestLogs = *body.MaxRequestLogs
 		}
+		if body.MaxRequestBodyMB != nil && *body.MaxRequestBodyMB > 0 {
+			c.MaxRequestBodyMB = *body.MaxRequestBodyMB
+		}
 	}); err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
@@ -263,7 +267,7 @@ func (m *Manager) HandleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if body.MaxRequestLogs != nil && *body.MaxRequestLogs > 0 && m.ReqStore != nil {
 		m.ReqStore.SetMax(cfg.MaxRequestLogs)
 	}
-	m.Log.Log(logging.LevelInfo, "Settings updated: enableVirtualKey="+btoa(cfg.EnableVirtualKey)+", enableAdminAuth="+btoa(cfg.EnableAdminAuth)+", logDetail="+cfg.LogDetail+", logBody="+btoa(cfg.LogBody)+", maxLogSizeMB="+itoa(cfg.MaxLogSizeMB)+", maxRequestLogs="+itoa(cfg.MaxRequestLogs), "system", "")
+	m.Log.Log(logging.LevelInfo, "Settings updated: enableVirtualKey="+btoa(cfg.EnableVirtualKey)+", enableAdminAuth="+btoa(cfg.EnableAdminAuth)+", logDetail="+cfg.LogDetail+", logBody="+btoa(cfg.LogBody)+", maxLogSizeMB="+itoa(cfg.MaxLogSizeMB)+", maxRequestLogs="+itoa(cfg.MaxRequestLogs)+", maxRequestBodyMB="+itoa(cfg.MaxRequestBodyMB), "system", "")
 	writeJSON(w, 200, cfg.ToSettings())
 }
 

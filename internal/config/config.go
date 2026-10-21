@@ -105,6 +105,7 @@ func defaultConfig() *domain.Config {
 		MaxLogSizeMB:     2,
 		MaxRequestLogs:   100000,
 		ActiveLogFile:    1,
+		MaxRequestBodyMB: 10,
 		Providers: []domain.Provider{
 			{ID: "gemini", Name: "Google Gemini", BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai", APIKey: os.Getenv("GEMINI_API_KEY"), Enabled: true, Models: []string{"gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash"}, Timeout: 120000},
 			{ID: "openai", Name: "OpenAI", BaseURL: "https://api.openai.com", Enabled: false, Models: []string{"gpt-4o", "gpt-4o-mini", "o1-mini"}, Timeout: 120000},
@@ -127,6 +128,7 @@ type rawConfig struct {
 	MaxLogSizeMB     *int           `json:"maxLogSizeMB"`
 	MaxRequestLogs   *int           `json:"maxRequestLogs"`
 	ActiveLogFile    *int           `json:"activeLogFile"`
+	MaxRequestBodyMB *int           `json:"maxRequestBodyMB"`
 	Providers        []rawProvider  `json:"providers"`
 	Groups           []rawGroup     `json:"groups"`
 	Keys             []rawKey       `json:"keys"`
@@ -205,6 +207,7 @@ func mergeConfig(base *domain.Config, raw *rawConfig, m map[string]json.RawMessa
 	out.MaxLogSizeMB = intOr(raw.MaxLogSizeMB, base.MaxLogSizeMB)
 	out.MaxRequestLogs = intOr(raw.MaxRequestLogs, base.MaxRequestLogs)
 	out.ActiveLogFile = intOr(raw.ActiveLogFile, base.ActiveLogFile)
+	out.MaxRequestBodyMB = intOr(raw.MaxRequestBodyMB, base.MaxRequestBodyMB)
 	if raw.Providers != nil {
 		ps := make([]domain.Provider, 0, len(raw.Providers))
 		for _, rp := range raw.Providers {
@@ -306,6 +309,9 @@ func validate(cfg *domain.Config) error {
 	}
 	if cfg.MaxRequestLogs < 0 {
 		return fmt.Errorf("config: maxRequestLogs must be >= 0, got %d", cfg.MaxRequestLogs)
+	}
+	if cfg.MaxRequestBodyMB < 0 {
+		return fmt.Errorf("config: maxRequestBodyMB must be >= 0, got %d", cfg.MaxRequestBodyMB)
 	}
 	seen := map[string]bool{}
 	for _, p := range cfg.Providers {

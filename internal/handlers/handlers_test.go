@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 
 	"llmproxy/internal/config"
 	"llmproxy/internal/domain"
+	"llmproxy/internal/logging"
 	"llmproxy/internal/logstore"
 )
 
@@ -34,7 +36,7 @@ func newTestManager(t *testing.T) *Manager {
 	}
 	_ = mgr.Replace(cfg)
 
-	return &Manager{Cfg: mgr, SysStore: sys, ReqStore: req}
+	return &Manager{Cfg: mgr, SysStore: sys, ReqStore: req, Log: logging.New(mgr, sys)}
 }
 
 func doGet(m *Manager, path string) (*httptest.ResponseRecorder, *http.Request) {
@@ -174,5 +176,26 @@ func TestResolveLogDetailRealtime(t *testing.T) {
 	}
 	if !logs2[1].HasDetail {
 		t.Fatalf("id-1 should resolve to true: %+v", logs2[1])
+	}
+}
+
+func TestHandleUpdateSettingsMaxRequestBodyMB(t *testing.T) {
+	m := newTestManager(t)
+	body, _ := json.Marshal(map[string]int{"maxRequestBodyMB": 32})
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	m.HandleUpdateSettings(w, req)
+	if w.Code != 200 {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out["maxRequestBodyMB"].(float64) != 32 {
+		t.Fatalf("maxRequestBodyMB = %v, want 32", out["maxRequestBodyMB"])
+	}
+	if m.Cfg.Get().MaxRequestBodyMB != 32 {
+		t.Fatalf("config maxRequestBodyMB = %d, want 32", m.Cfg.Get().MaxRequestBodyMB)
 	}
 }

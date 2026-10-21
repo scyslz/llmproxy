@@ -53,9 +53,10 @@ type Settings struct {
 	EnableAdminAuth  bool   `json:"enableAdminAuth"`
 	LogDetail        string `json:"logDetail"`
 	LogBody          bool   `json:"logBody"`
-	MaxLogSizeMB     int    `json:"maxLogSizeMB"`
-	MaxRequestLogs   int    `json:"maxRequestLogs"`
-	ActiveLogFile    int    `json:"activeLogFile"`
+	MaxLogSizeMB      int `json:"maxLogSizeMB"`
+	MaxRequestLogs    int `json:"maxRequestLogs"`
+	ActiveLogFile     int `json:"activeLogFile"`
+	MaxRequestBodyMB  int `json:"maxRequestBodyMB"`
 }
 
 // Config is the runtime configuration persisted to config/config.json.
@@ -66,9 +67,10 @@ type Config struct {
 	AdminPassword    string       `json:"adminPassword,omitempty"`
 	LogDetail        string       `json:"logDetail"`
 	LogBody          bool         `json:"logBody"`
-	MaxLogSizeMB     int          `json:"maxLogSizeMB"`
-	MaxRequestLogs   int          `json:"maxRequestLogs"`
+	MaxLogSizeMB     int             `json:"maxLogSizeMB"`
+	MaxRequestLogs   int             `json:"maxRequestLogs"`
 	ActiveLogFile    int             `json:"activeLogFile"`
+	MaxRequestBodyMB int             `json:"maxRequestBodyMB"`
 	Providers        []Provider      `json:"providers"`
 	Groups           []ProviderGroup `json:"groups,omitempty"`
 	Keys             []VirtualKey    `json:"keys"`
@@ -84,6 +86,7 @@ func (c *Config) ToSettings() Settings {
 		MaxLogSizeMB:     orInt(c.MaxLogSizeMB, 2),
 		MaxRequestLogs:   orInt(c.MaxRequestLogs, 100000),
 		ActiveLogFile:    orInt(c.ActiveLogFile, 1),
+		MaxRequestBodyMB: orInt(c.MaxRequestBodyMB, 10),
 	}
 }
 

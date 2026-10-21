@@ -103,4 +103,30 @@ func TestNewFallsBackToDefaultsWithoutFile(t *testing.T) {
 	if cfg.LogDetail != "basic" {
 		t.Fatalf("default logDetail = %q", cfg.LogDetail)
 	}
+	if cfg.MaxRequestBodyMB != 10 {
+		t.Fatalf("default maxRequestBodyMB = %d, want 10", cfg.MaxRequestBodyMB)
+	}
+}
+
+func TestNewLoadsMaxRequestBodyMB(t *testing.T) {
+	dir := writeConfig(t, `{
+		"listen": ":3000",
+		"maxRequestBodyMB": 25,
+		"providers": [{"id":"a","name":"A","baseUrl":"http://a","apiKey":"k","enabled":true}]
+	}`)
+	m, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	cfg := m.Get()
+	if cfg.MaxRequestBodyMB != 25 {
+		t.Fatalf("maxRequestBodyMB = %d, want 25", cfg.MaxRequestBodyMB)
+	}
+}
+
+func TestNewRejectsNegativeMaxRequestBodyMB(t *testing.T) {
+	dir := writeConfig(t, `{"listen":":3000","maxRequestBodyMB":-1}`)
+	if _, err := New(dir); err == nil {
+		t.Fatal("expected error for negative maxRequestBodyMB")
+	}
 }

@@ -396,9 +396,18 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 	var reqBody map[string]interface{}
 	var rawBody []byte
 	if h.method == "POST" || h.method == "PUT" {
-		data, err := io.ReadAll(io.LimitReader(r.Body, 10*1024*1024))
+		limit := int64(h.cfg.MaxRequestBodyMB)
+		if limit <= 0 {
+			limit = 10
+		}
+		limitBytes := limit * 1024 * 1024
+		data, err := io.ReadAll(io.LimitReader(r.Body, limitBytes+1))
 		if err != nil {
 			writeJSON(w, 400, map[string]string{"error": "Invalid request body"})
+			return
+		}
+		if int64(len(data)) > limitBytes {
+			writeJSON(w, 413, map[string]string{"error": "Request body too large"})
 			return
 		}
 		rawBody = data

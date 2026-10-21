@@ -108,6 +108,7 @@ export interface Settings {
   maxLogSizeMB: number;
   maxRequestLogs?: number;
   activeLogFile?: number;
+  maxRequestBodyMB?: number;
 }
 
 export interface Message {

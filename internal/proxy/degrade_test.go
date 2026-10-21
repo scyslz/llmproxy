@@ -324,4 +324,38 @@ func TestHandleProxyPerProviderModel(t *testing.T) {
 	}
 }
 
+func TestHandleProxyRejectsOversizedBody(t *testing.T) {
+	tmp := t.TempDir()
+	cm, err := config.New(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &domain.Config{
+		Listen:           ":0",
+		EnableVirtualKey: false,
+		LogDetail:        "off",
+		MaxRequestBodyMB: 1,
+		Providers: []domain.Provider{
+			{ID: "p", Name: "P", BaseURL: "http://127.0.0.1:1", APIKey: "k", Enabled: true, Models: []string{"m"}, DefaultModel: "m"},
+		},
+	}
+	if err := cm.Replace(cfg); err != nil {
+		t.Fatal(err)
+	}
+	sysStore, err := logstore.OpenSystem(tmp + "/system.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sysStore.Close()
+	a := &App{Cfg: cm, Breaker: circuit.NewBreaker(), Client: NewClient(), Logger: logging.New(cm, sysStore)}
+
+	body := `{"model":"m","messages":[{"role":"user","content":"` + strings.Repeat("x", 1024*1024+64) + `"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	a.HandleProxy(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 var _ = json.Marshal

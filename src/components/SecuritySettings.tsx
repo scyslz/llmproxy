@@ -34,6 +34,8 @@ export default function SecuritySettings({
   const [requestLogCount, setRequestLogCount] = useState<number | null>(null);
   const [maxRequestLogs, setMaxRequestLogs] = useState<number>(100000);
   const [customRequestLogsInput, setCustomRequestLogsInput] = useState<string>("");
+  const [maxRequestBodyMB, setMaxRequestBodyMB] = useState<number>(10);
+  const [customRequestBodyInput, setCustomRequestBodyInput] = useState<string>("");
   const [logLoading, setLogLoading] = useState(true);
 
   const fetchLogStatusAndSettings = async () => {
@@ -54,6 +56,9 @@ export default function SecuritySettings({
         setLogBody(setData.logBody === true);
         if (typeof setData.maxRequestLogs === "number" && setData.maxRequestLogs > 0) {
           setMaxRequestLogs(setData.maxRequestLogs);
+        }
+        if (typeof setData.maxRequestBodyMB === "number" && setData.maxRequestBodyMB > 0) {
+          setMaxRequestBodyMB(setData.maxRequestBodyMB);
         }
       }
       if (reqStatsRes && reqStatsRes.ok) {
@@ -86,6 +91,9 @@ export default function SecuritySettings({
           setLogBody(setData.logBody === true);
           if (typeof setData.maxRequestLogs === "number" && setData.maxRequestLogs > 0) {
             setMaxRequestLogs(setData.maxRequestLogs);
+          }
+          if (typeof setData.maxRequestBodyMB === "number" && setData.maxRequestBodyMB > 0) {
+            setMaxRequestBodyMB(setData.maxRequestBodyMB);
           }
         }
         if (reqStatsRes && reqStatsRes.ok) {
@@ -180,6 +188,26 @@ export default function SecuritySettings({
       await fetchLogStatusAndSettings();
     } catch (err: any) {
       setErrorMsg(err.message || "Failed to update max request logs");
+    } finally {
+      setLogActionLoading(false);
+    }
+  };
+
+  const handleSaveMaxRequestBodyMB = async (n: number) => {
+    if (!Number.isFinite(n) || n <= 0) return;
+    const next = Math.floor(n);
+    try {
+      setLogActionLoading(true);
+      await apiFetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ maxRequestBodyMB: next })
+      });
+      setMaxRequestBodyMB(next);
+      setSuccessMsg(`Max proxy request body updated to ${next} MB.`);
+      await fetchLogStatusAndSettings();
+    } catch (err: any) {
+      setErrorMsg(err.message || "Failed to update max request body size");
     } finally {
       setLogActionLoading(false);
     }
@@ -535,6 +563,53 @@ export default function SecuritySettings({
                     onClick={() => {
                       const num = Number(customSizeInput);
                       if (num > 0) handleSaveLogSize(num);
+                    }}
+                    className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-900 text-white rounded-xl text-xs font-semibold disabled:opacity-40 transition-all cursor-pointer"
+                  >
+                    Apply
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2 pt-2 border-t border-neutral-100">
+              <label className="text-xs font-semibold text-neutral-700 block">Max Proxy Request Body:</label>
+              <p className="text-[11px] text-neutral-500">Caps the JSON body size for /v1/* proxy requests (chat sessions, images, etc.). Default 10 MB.</p>
+              <div className="flex flex-wrap items-center gap-2">
+                {[1, 2, 5, 10, 20, 50, 100].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => {
+                      handleSaveMaxRequestBodyMB(n);
+                      setCustomRequestBodyInput("");
+                    }}
+                    disabled={logActionLoading || logLoading || maxRequestBodyMB === n}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                      maxRequestBodyMB === n
+                        ? "bg-neutral-900 text-white shadow-xs"
+                        : "bg-neutral-100 hover:bg-neutral-200 text-neutral-700 border border-neutral-200"
+                    }`}
+                  >
+                    {n} MB
+                  </button>
+                ))}
+                <div className="flex items-center space-x-1.5 ml-1">
+                  <input
+                    type="number"
+                    min="1"
+                    max="10000"
+                    placeholder="Custom MB"
+                    value={customRequestBodyInput}
+                    onChange={(e) => setCustomRequestBodyInput(e.target.value)}
+                    className="w-24 px-2.5 py-1.5 bg-white border border-neutral-300 rounded-xl text-xs text-neutral-800 outline-none focus:border-neutral-500 shadow-2xs font-mono"
+                  />
+                  <button
+                    type="button"
+                    disabled={!customRequestBodyInput || isNaN(Number(customRequestBodyInput)) || Number(customRequestBodyInput) <= 0 || logActionLoading}
+                    onClick={() => {
+                      const num = Number(customRequestBodyInput);
+                      if (num > 0) handleSaveMaxRequestBodyMB(num);
                     }}
                     className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-900 text-white rounded-xl text-xs font-semibold disabled:opacity-40 transition-all cursor-pointer"
                   >
