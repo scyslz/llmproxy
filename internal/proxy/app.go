@@ -169,6 +169,41 @@ func (a *App) selectCandidates(cfg *domain.Config, apiKey string, keyName *strin
 	return enabledCandidates(cfg.Providers), false, false
 }
 
+func keyMatched(cfg *domain.Config, apiKey string) bool {
+	if apiKey == "" {
+		return false
+	}
+	for _, k := range cfg.Keys {
+		if k.Key == apiKey {
+			return true
+		}
+	}
+	return false
+}
+
+func authorizeRequest(cfg *domain.Config, r *http.Request, apiKey string) (ok bool, clientIP string, bypassByIP bool) {
+	// 反代标记头值匹配时才采信转发头（信任代理）；直连无标记只用 TCP 对端。
+	trust := cfg.TrustProxy || auth.ProxyFlagPresent(r, cfg.ProxyFlagHeader, cfg.ProxyFlagValue)
+	clientIP = auth.ClientIP(r, trust)
+	// 信任代理但转发头取不到合法 IP：拒绝，不回退 RemoteAddr（可被反代地址冒用）。
+	if trust && clientIP == "" {
+		return false, "", false
+	}
+	if !cfg.EnableVirtualKey {
+		return true, clientIP, false
+	}
+	if auth.IPAllowed(clientIP, cfg.AllowedIPs) {
+		return true, clientIP, true
+	}
+	if keyMatched(cfg, apiKey) {
+		return true, clientIP, false
+	}
+	if len(cfg.Keys) == 0 {
+		return true, clientIP, false
+	}
+	return false, clientIP, false
+}
+
 func findGroup(cfg *domain.Config, id string) *domain.ProviderGroup {
 	for i := range cfg.Groups {
 		if cfg.Groups[i].ID == id {
@@ -424,26 +459,14 @@ func (a *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 	}
 
-	// virtual key 校验
-	if h.cfg.EnableVirtualKey {
-		matched := false
-		if h.apiKey != "" {
-			for _, k := range h.cfg.Keys {
-				if k.Key == h.apiKey {
-					matched = true
-					break
-				}
-			}
-		}
-		if !matched {
-			if len(h.cfg.Keys) == 0 {
-				h.proxyLog(a, logging.LevelWarn, "Virtual key mode enabled but no keys configured. Proceeding with default routing.")
-			} else {
-				a.Logger.Log(logging.LevelError, "Virtual key validation failed for request to "+h.origPath, "proxy", h.requestID)
-				writeJSON(w, 401, map[string]string{"error": "Unauthorized: Invalid or missing virtual key"})
-				return
-			}
-		}
+	ok, clientIP, _ := authorizeRequest(h.cfg, r, h.apiKey)
+	if !ok {
+		a.Logger.Log(logging.LevelError, "Virtual key validation failed for request to "+h.origPath+" from "+clientIP, "proxy", h.requestID)
+		writeJSON(w, 401, map[string]string{"error": "Unauthorized: Invalid or missing virtual key"})
+		return
+	}
+	if h.cfg.EnableVirtualKey && len(h.cfg.Keys) == 0 && !keyMatched(h.cfg, h.apiKey) && !auth.IPAllowed(clientIP, h.cfg.AllowedIPs) {
+		h.proxyLog(a, logging.LevelWarn, "Virtual key mode enabled but no keys configured. Proceeding with default routing.")
 	}
 
 	cands, bound, fromGroup := a.selectCandidates(h.cfg, h.apiKey, &h.keyName)

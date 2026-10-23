@@ -109,6 +109,10 @@ export interface Settings {
   maxRequestLogs?: number;
   activeLogFile?: number;
   maxRequestBodyMB?: number;
+  allowedIps?: string[];
+  trustProxy?: boolean;
+  proxyFlagHeader?: string;
+  proxyFlagValue?: string;
 }
 
 export interface Message {

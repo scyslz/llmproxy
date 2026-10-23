@@ -37,6 +37,11 @@ export default function SecuritySettings({
   const [maxRequestBodyMB, setMaxRequestBodyMB] = useState<number>(10);
   const [customRequestBodyInput, setCustomRequestBodyInput] = useState<string>("");
   const [logLoading, setLogLoading] = useState(true);
+  const [allowedIpsText, setAllowedIpsText] = useState("");
+  const [trustProxy, setTrustProxy] = useState(false);
+  const [ipSaving, setIpSaving] = useState(false);
+  const [flagHeader, setFlagHeader] = useState("");
+  const [flagValue, setFlagValue] = useState("");
 
   const fetchLogStatusAndSettings = async () => {
     try {
@@ -57,18 +62,22 @@ export default function SecuritySettings({
         if (typeof setData.maxRequestLogs === "number" && setData.maxRequestLogs > 0) {
           setMaxRequestLogs(setData.maxRequestLogs);
         }
-        if (typeof setData.maxRequestBodyMB === "number" && setData.maxRequestBodyMB > 0) {
-          setMaxRequestBodyMB(setData.maxRequestBodyMB);
-        }
-      }
-      if (reqStatsRes && reqStatsRes.ok) {
-        const statsData = await reqStatsRes.json();
-        setRequestLogCount(statsData.count ?? null);
-      }
-    } catch {} finally {
-      setLogLoading(false);
-    }
-  };
+         if (typeof setData.maxRequestBodyMB === "number" && setData.maxRequestBodyMB > 0) {
+           setMaxRequestBodyMB(setData.maxRequestBodyMB);
+         }
+         setAllowedIpsText(Array.isArray(setData.allowedIps) ? setData.allowedIps.join("\n") : "");
+         setTrustProxy(setData.trustProxy === true);
+         setFlagHeader(typeof setData.proxyFlagHeader === "string" ? setData.proxyFlagHeader : "");
+         setFlagValue(typeof setData.proxyFlagValue === "string" ? setData.proxyFlagValue : "");
+       }
+       if (reqStatsRes && reqStatsRes.ok) {
+         const statsData = await reqStatsRes.json();
+         setRequestLogCount(statsData.count ?? null);
+       }
+     } catch {} finally {
+       setLogLoading(false);
+     }
+   };
 
   useEffect(() => {
     let cancelled = false;
@@ -95,6 +104,10 @@ export default function SecuritySettings({
           if (typeof setData.maxRequestBodyMB === "number" && setData.maxRequestBodyMB > 0) {
             setMaxRequestBodyMB(setData.maxRequestBodyMB);
           }
+          setAllowedIpsText(Array.isArray(setData.allowedIps) ? setData.allowedIps.join("\n") : "");
+          setTrustProxy(setData.trustProxy === true);
+          setFlagHeader(typeof setData.proxyFlagHeader === "string" ? setData.proxyFlagHeader : "");
+          setFlagValue(typeof setData.proxyFlagValue === "string" ? setData.proxyFlagValue : "");
         }
         if (reqStatsRes && reqStatsRes.ok) {
           const statsData = await reqStatsRes.json();
@@ -224,6 +237,52 @@ export default function SecuritySettings({
       setErrorMsg(err.message || "Failed to clear request usage logs");
     } finally {
       setLogActionLoading(false);
+    }
+  };
+
+  const parseAllowedIps = (text: string) =>
+    text.split(/\r?\n/).map((s) => s.trim()).filter((s) => s.length > 0);
+
+  const handleToggleTrustProxy = async (val: boolean) => {
+    try {
+      setIpSaving(true);
+      const res = await apiFetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trustProxy: val })
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to update trust proxy");
+      }
+      setTrustProxy(val);
+      setSuccessMsg(val ? "Trust proxy enabled. X-Real-IP / X-Forwarded-For will be used." : "Trust proxy disabled. Only TCP peer address is used.");
+    } catch (err: any) {
+      setErrorMsg(err.message || "Failed to update trust proxy");
+    } finally {
+      setIpSaving(false);
+    }
+  };
+
+  const handleSaveAllowedIps = async () => {
+    const ips = parseAllowedIps(allowedIpsText);
+    try {
+      setIpSaving(true);
+      const res = await apiFetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allowedIps: ips, proxyFlagHeader: flagHeader.trim(), proxyFlagValue: flagValue.trim() })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to update allowed IPs");
+      }
+      setAllowedIpsText(Array.isArray(data.allowedIps) ? data.allowedIps.join("\n") : ips.join("\n"));
+      setSuccessMsg(ips.length === 0 ? "IP allowlist cleared. Virtual Key is required when the gate is on." : `Saved ${ips.length} allowlist ${ips.length === 1 ? "entry" : "entries"}.`);
+    } catch (err: any) {
+      setErrorMsg(err.message || "Failed to update allowed IPs");
+    } finally {
+      setIpSaving(false);
     }
   };
 
@@ -416,7 +475,7 @@ export default function SecuritySettings({
             </div>
 
             <p className="text-xs text-neutral-600 leading-relaxed">
-              Governs authentication for AI generation endpoints (<code className="text-neutral-800 font-mono bg-neutral-100 border border-neutral-200 px-1 py-0.5 rounded">/v1/chat/completions</code>). When enabled, clients must provide a valid <code className="text-neutral-700 font-mono">sk-proxy-...</code> Virtual Key in their Authorization header.
+              Governs authentication for AI generation endpoints (<code className="text-neutral-800 font-mono bg-neutral-100 border border-neutral-200 px-1 py-0.5 rounded">/v1/chat/completions</code>). When enabled, clients must provide a valid <code className="text-neutral-700 font-mono">sk-proxy-...</code> Virtual Key, unless the client IP is on the allowlist below.
             </p>
 
             <div className="p-3.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs flex items-center justify-between">
@@ -425,7 +484,7 @@ export default function SecuritySettings({
                 {enableVirtualKey ? (
                   <>
                     <ShieldCheck className="w-3.5 h-3.5" />
-                    <span>Strict (Virtual Key Required)</span>
+                    <span>Strict (Key or Allowlisted IP)</span>
                   </>
                 ) : (
                   <>
@@ -435,6 +494,69 @@ export default function SecuritySettings({
                 )}
               </span>
             </div>
+
+            {enableVirtualKey && (
+              <div className="space-y-3 pt-1 border-t border-neutral-150">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold text-neutral-800">Trust reverse proxy</p>
+                    <p className="text-[11px] text-neutral-500 leading-relaxed mt-0.5">
+                      Off: match the TCP peer (direct connections only — Docker port mapping hides the real client IP). On: use X-Real-IP / X-Forwarded-For set by your reverse proxy.
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={trustProxy}
+                      disabled={ipSaving}
+                      onChange={(e) => handleToggleTrustProxy(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-neutral-250 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-neutral-900"></div>
+                  </label>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-neutral-800">IP allowlist (bypass key)</label>
+                  <p className="text-[11px] text-neutral-500 leading-relaxed">
+                    One IPv4/IPv6 or CIDR per line. Matching clients skip the Virtual Key. Empty list requires a valid key.
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      value={flagHeader}
+                      onChange={(e) => setFlagHeader(e.target.value)}
+                      placeholder="Proxy flag header (e.g. X-Proxy-Flag)"
+                      className="bg-white border border-neutral-250 rounded-xl px-3 py-2 text-xs text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400"
+                    />
+                    <input
+                      type="text"
+                      value={flagValue}
+                      onChange={(e) => setFlagValue(e.target.value)}
+                      placeholder="Proxy flag secret value (optional)"
+                      className="bg-white border border-neutral-250 rounded-xl px-3 py-2 text-xs font-mono text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400"
+                    />
+                  </div>
+                  <p className="text-[11px] text-neutral-500 leading-relaxed">
+                    Only requests carrying this header (with the secret value, if set) trust X-Real-IP / X-Forwarded-For. Direct intranet clients have no flag and match the TCP peer against the allowlist.
+                  </p>
+                  <textarea
+                    value={allowedIpsText}
+                    onChange={(e) => setAllowedIpsText(e.target.value)}
+                    rows={5}
+                    placeholder={"127.0.0.1\n10.0.0.0/8"}
+                    className="w-full bg-white border border-neutral-250 rounded-xl px-3.5 py-2 text-xs font-mono text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400"
+                  />
+                  <button
+                    type="button"
+                    disabled={ipSaving}
+                    onClick={handleSaveAllowedIps}
+                    className="bg-neutral-900 text-white hover:bg-neutral-800 disabled:opacity-40 px-3.5 py-2 rounded-xl text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
+                  >
+                    {ipSaving ? "Saving..." : "Save Allowlist"}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Proxy Logging Detail */}

@@ -199,3 +199,31 @@ func TestHandleUpdateSettingsMaxRequestBodyMB(t *testing.T) {
 		t.Fatalf("config maxRequestBodyMB = %d, want 32", m.Cfg.Get().MaxRequestBodyMB)
 	}
 }
+
+func TestHandleUpdateSettingsAllowedIPs(t *testing.T) {
+	m := newTestManager(t)
+	body, _ := json.Marshal(map[string]interface{}{
+		"allowedIps": []string{"127.0.0.1", "10.0.0.0/8"},
+		"trustProxy": true,
+	})
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	m.HandleUpdateSettings(w, req)
+	if w.Code != 200 {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	cfg := m.Cfg.Get()
+	if !cfg.TrustProxy {
+		t.Fatal("trustProxy want true")
+	}
+	if len(cfg.AllowedIPs) != 2 || cfg.AllowedIPs[0] != "127.0.0.1" || cfg.AllowedIPs[1] != "10.0.0.0/8" {
+		t.Fatalf("allowedIps = %#v", cfg.AllowedIPs)
+	}
+
+	bad, _ := json.Marshal(map[string]interface{}{"allowedIps": []string{"not-an-ip"}})
+	w2 := httptest.NewRecorder()
+	m.HandleUpdateSettings(w2, httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(bad)))
+	if w2.Code != 400 {
+		t.Fatalf("invalid CIDR status = %d, want 400", w2.Code)
+	}
+}

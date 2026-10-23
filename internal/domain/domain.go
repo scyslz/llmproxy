@@ -53,10 +53,12 @@ type Settings struct {
 	EnableAdminAuth  bool   `json:"enableAdminAuth"`
 	LogDetail        string `json:"logDetail"`
 	LogBody          bool   `json:"logBody"`
-	MaxLogSizeMB      int `json:"maxLogSizeMB"`
-	MaxRequestLogs    int `json:"maxRequestLogs"`
-	ActiveLogFile     int `json:"activeLogFile"`
-	MaxRequestBodyMB  int `json:"maxRequestBodyMB"`
+	MaxLogSizeMB      int      `json:"maxLogSizeMB"`
+	MaxRequestLogs    int      `json:"maxRequestLogs"`
+	ActiveLogFile     int      `json:"activeLogFile"`
+	MaxRequestBodyMB  int      `json:"maxRequestBodyMB"`
+	AllowedIPs        []string `json:"allowedIps"`
+	TrustProxy        bool     `json:"trustProxy"`
 }
 
 // Config is the runtime configuration persisted to config/config.json.
@@ -71,6 +73,12 @@ type Config struct {
 	MaxRequestLogs   int             `json:"maxRequestLogs"`
 	ActiveLogFile    int             `json:"activeLogFile"`
 	MaxRequestBodyMB int             `json:"maxRequestBodyMB"`
+	AllowedIPs       []string        `json:"allowedIps,omitempty"`
+	TrustProxy       bool            `json:"trustProxy,omitempty"`
+	// ProxyFlagHeader / ProxyFlagValue：反代写入的标记头。值匹配才采信转发头；
+	// 空值表示未启用标记，仅按 trustProxy 决定是否采信转发头。
+	ProxyFlagHeader string          `json:"proxyFlagHeader,omitempty"`
+	ProxyFlagValue  string          `json:"proxyFlagValue,omitempty"`
 	Providers        []Provider      `json:"providers"`
 	Groups           []ProviderGroup `json:"groups,omitempty"`
 	Keys             []VirtualKey    `json:"keys"`
@@ -87,7 +95,16 @@ func (c *Config) ToSettings() Settings {
 		MaxRequestLogs:   orInt(c.MaxRequestLogs, 100000),
 		ActiveLogFile:    orInt(c.ActiveLogFile, 1),
 		MaxRequestBodyMB: orInt(c.MaxRequestBodyMB, 10),
+		AllowedIPs:       orStringSlice(c.AllowedIPs),
+		TrustProxy:       c.TrustProxy,
 	}
+}
+
+func orStringSlice(v []string) []string {
+	if v == nil {
+		return []string{}
+	}
+	return v
 }
 
 func orString(s, def string) string {

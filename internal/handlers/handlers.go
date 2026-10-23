@@ -218,13 +218,26 @@ func (m *Manager) HandleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		AdminPassword    *string `json:"adminPassword"`
 		LogDetail        *string `json:"logDetail"`
 		LogBody          *bool   `json:"logBody"`
-		MaxLogSizeMB     *int    `json:"maxLogSizeMB"`
-		MaxRequestLogs   *int    `json:"maxRequestLogs"`
-		MaxRequestBodyMB *int    `json:"maxRequestBodyMB"`
+		MaxLogSizeMB     *int      `json:"maxLogSizeMB"`
+		MaxRequestLogs   *int      `json:"maxRequestLogs"`
+		MaxRequestBodyMB *int      `json:"maxRequestBodyMB"`
+		AllowedIps       *[]string `json:"allowedIps"`
+		TrustProxy       *bool     `json:"trustProxy"`
+		ProxyFlagHeader  *string   `json:"proxyFlagHeader"`
+		ProxyFlagValue   *string   `json:"proxyFlagValue"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, 400, map[string]string{"error": "Invalid request body"})
 		return
+	}
+	var normalizedIPs []string
+	if body.AllowedIps != nil {
+		n, err := auth.NormalizeAllowedIPs(*body.AllowedIps)
+		if err != nil {
+			writeJSON(w, 400, map[string]string{"error": err.Error()})
+			return
+		}
+		normalizedIPs = n
 	}
 	if err := m.Cfg.Update(func(c *domain.Config) {
 		if body.EnableVirtualKey != nil {
@@ -259,6 +272,18 @@ func (m *Manager) HandleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		if body.MaxRequestBodyMB != nil && *body.MaxRequestBodyMB > 0 {
 			c.MaxRequestBodyMB = *body.MaxRequestBodyMB
 		}
+		if body.AllowedIps != nil {
+			c.AllowedIPs = normalizedIPs
+		}
+		if body.TrustProxy != nil {
+			c.TrustProxy = *body.TrustProxy
+		}
+		if body.ProxyFlagHeader != nil {
+			c.ProxyFlagHeader = strings.TrimSpace(*body.ProxyFlagHeader)
+		}
+		if body.ProxyFlagValue != nil {
+			c.ProxyFlagValue = strings.TrimSpace(*body.ProxyFlagValue)
+		}
 	}); err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
@@ -267,7 +292,7 @@ func (m *Manager) HandleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if body.MaxRequestLogs != nil && *body.MaxRequestLogs > 0 && m.ReqStore != nil {
 		m.ReqStore.SetMax(cfg.MaxRequestLogs)
 	}
-	m.Log.Log(logging.LevelInfo, "Settings updated: enableVirtualKey="+btoa(cfg.EnableVirtualKey)+", enableAdminAuth="+btoa(cfg.EnableAdminAuth)+", logDetail="+cfg.LogDetail+", logBody="+btoa(cfg.LogBody)+", maxLogSizeMB="+itoa(cfg.MaxLogSizeMB)+", maxRequestLogs="+itoa(cfg.MaxRequestLogs)+", maxRequestBodyMB="+itoa(cfg.MaxRequestBodyMB), "system", "")
+	m.Log.Log(logging.LevelInfo, "Settings updated: enableVirtualKey="+btoa(cfg.EnableVirtualKey)+", enableAdminAuth="+btoa(cfg.EnableAdminAuth)+", logDetail="+cfg.LogDetail+", logBody="+btoa(cfg.LogBody)+", maxLogSizeMB="+itoa(cfg.MaxLogSizeMB)+", maxRequestLogs="+itoa(cfg.MaxRequestLogs)+", maxRequestBodyMB="+itoa(cfg.MaxRequestBodyMB)+", trustProxy="+btoa(cfg.TrustProxy)+", allowedIps="+itoa(len(cfg.AllowedIPs)), "system", "")
 	writeJSON(w, 200, cfg.ToSettings())
 }
 

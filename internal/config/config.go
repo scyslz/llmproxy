@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"llmproxy/internal/auth"
 	"llmproxy/internal/domain"
 )
 
@@ -106,6 +107,8 @@ func defaultConfig() *domain.Config {
 		MaxRequestLogs:   100000,
 		ActiveLogFile:    1,
 		MaxRequestBodyMB: 10,
+		AllowedIPs:       []string{},
+		TrustProxy:       false,
 		Providers: []domain.Provider{
 			{ID: "gemini", Name: "Google Gemini", BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai", APIKey: os.Getenv("GEMINI_API_KEY"), Enabled: true, Models: []string{"gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash"}, Timeout: 120000},
 			{ID: "openai", Name: "OpenAI", BaseURL: "https://api.openai.com", Enabled: false, Models: []string{"gpt-4o", "gpt-4o-mini", "o1-mini"}, Timeout: 120000},
@@ -129,6 +132,10 @@ type rawConfig struct {
 	MaxRequestLogs   *int           `json:"maxRequestLogs"`
 	ActiveLogFile    *int           `json:"activeLogFile"`
 	MaxRequestBodyMB *int           `json:"maxRequestBodyMB"`
+	AllowedIPs       []string       `json:"allowedIps"`
+	TrustProxy       *bool          `json:"trustProxy"`
+	ProxyFlagHeader  *string        `json:"proxyFlagHeader"`
+	ProxyFlagValue   *string        `json:"proxyFlagValue"`
 	Providers        []rawProvider  `json:"providers"`
 	Groups           []rawGroup     `json:"groups"`
 	Keys             []rawKey       `json:"keys"`
@@ -208,6 +215,20 @@ func mergeConfig(base *domain.Config, raw *rawConfig, m map[string]json.RawMessa
 	out.MaxRequestLogs = intOr(raw.MaxRequestLogs, base.MaxRequestLogs)
 	out.ActiveLogFile = intOr(raw.ActiveLogFile, base.ActiveLogFile)
 	out.MaxRequestBodyMB = intOr(raw.MaxRequestBodyMB, base.MaxRequestBodyMB)
+	if _, ok := m["allowedIps"]; ok {
+		if raw.AllowedIPs == nil {
+			out.AllowedIPs = []string{}
+		} else {
+			out.AllowedIPs = raw.AllowedIPs
+		}
+	}
+	out.TrustProxy = boolOr(raw.TrustProxy, base.TrustProxy)
+	if _, ok := m["proxyFlagHeader"]; ok && raw.ProxyFlagHeader != nil {
+		out.ProxyFlagHeader = strings.TrimSpace(*raw.ProxyFlagHeader)
+	}
+	if _, ok := m["proxyFlagValue"]; ok && raw.ProxyFlagValue != nil {
+		out.ProxyFlagValue = strings.TrimSpace(*raw.ProxyFlagValue)
+	}
 	if raw.Providers != nil {
 		ps := make([]domain.Provider, 0, len(raw.Providers))
 		for _, rp := range raw.Providers {
@@ -290,6 +311,9 @@ func normalize(cfg *domain.Config) *domain.Config {
 	if cfg.Keys == nil {
 		cfg.Keys = []domain.VirtualKey{}
 	}
+	if cfg.AllowedIPs == nil {
+		cfg.AllowedIPs = []string{}
+	}
 	return cfg
 }
 
@@ -347,6 +371,11 @@ func validate(cfg *domain.Config) error {
 			return fmt.Errorf("config: virtual key %q missing key", k.Name)
 		}
 	}
+	normalized, err := auth.NormalizeAllowedIPs(cfg.AllowedIPs)
+	if err != nil {
+		return fmt.Errorf("config: allowedIps: %w", err)
+	}
+	cfg.AllowedIPs = normalized
 	return nil
 }
 

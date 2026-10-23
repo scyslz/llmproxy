@@ -24,19 +24,10 @@ func (a *App) HandleModels(w http.ResponseWriter, r *http.Request) {
 	apiKey := auth.ExtractBearer(r.Header.Get("Authorization"))
 	reqID := ShortID()
 
-	if cfg.EnableVirtualKey && len(cfg.Keys) > 0 {
-		matched := false
-		for _, k := range cfg.Keys {
-			if k.Key == apiKey {
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			a.Logger.Log(logging.LevelWarn, "Unauthorized /v1/models request. Invalid or missing key.", "proxy", reqID)
-			writeJSON(w, 401, map[string]string{"error": "Unauthorized: Invalid virtual key"})
-			return
-		}
+	if ok, clientIP, _ := authorizeRequest(cfg, r, apiKey); !ok {
+		a.Logger.Log(logging.LevelWarn, "Unauthorized /v1/models request from "+clientIP+". Invalid or missing key.", "proxy", reqID)
+		writeJSON(w, 401, map[string]string{"error": "Unauthorized: Invalid virtual key"})
+		return
 	}
 
 	cands, _, _ := a.selectCandidates(cfg, apiKey, nil)
