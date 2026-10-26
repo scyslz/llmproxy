@@ -114,12 +114,6 @@ export default function Login({ onLoginSuccess }: LoginProps) {
               )}
             </button>
           </form>
-
-          <div className="mt-6 pt-5 border-t border-neutral-200 text-center">
-            <p className="text-xs text-neutral-500 leading-relaxed">
-              <span className="font-semibold text-neutral-700">Architecture Note:</span> Proxy endpoints (<code className="text-neutral-800 font-mono bg-neutral-100 border border-neutral-200 px-1 py-0.5 rounded">/v1/*</code>) are governed by API Keys & Virtual Keys. This login only verifies access to the management console (<code className="text-neutral-800 font-mono bg-neutral-100 border border-neutral-200 px-1 py-0.5 rounded">/api/*</code>).
-            </p>
-          </div>
         </div>
       </div>
     </div>

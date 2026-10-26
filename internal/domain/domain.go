@@ -59,6 +59,8 @@ type Settings struct {
 	MaxRequestBodyMB  int      `json:"maxRequestBodyMB"`
 	AllowedIPs        []string `json:"allowedIps"`
 	TrustProxy        bool     `json:"trustProxy"`
+	ProxyFlagHeader   string   `json:"proxyFlagHeader"`
+	ProxyFlagValue    string   `json:"proxyFlagValue"`
 }
 
 // Config is the runtime configuration persisted to config/config.json.
@@ -97,6 +99,8 @@ func (c *Config) ToSettings() Settings {
 		MaxRequestBodyMB: orInt(c.MaxRequestBodyMB, 10),
 		AllowedIPs:       orStringSlice(c.AllowedIPs),
 		TrustProxy:       c.TrustProxy,
+		ProxyFlagHeader:  c.ProxyFlagHeader,
+		ProxyFlagValue:   c.ProxyFlagValue,
 	}
 }
 

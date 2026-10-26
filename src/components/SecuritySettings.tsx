@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Lock, ShieldCheck, ShieldAlert, KeyRound, Check, AlertTriangle, LogOut, Terminal, Save, Eye, EyeOff, FileText, Trash2, HardDrive } from "lucide-react";
+import { ShieldCheck, ShieldAlert, KeyRound, Check, AlertTriangle, LogOut, Terminal, Save, Eye, EyeOff, Trash2, HardDrive } from "lucide-react";
 import { apiFetch } from "../lib/api";
 import { LogStatus } from "../types";
 
@@ -40,6 +40,7 @@ export default function SecuritySettings({
   const [allowedIpsText, setAllowedIpsText] = useState("");
   const [trustProxy, setTrustProxy] = useState(false);
   const [ipSaving, setIpSaving] = useState(false);
+  const [proxySaving, setProxySaving] = useState(false);
   const [flagHeader, setFlagHeader] = useState("");
   const [flagValue, setFlagValue] = useState("");
 
@@ -245,7 +246,7 @@ export default function SecuritySettings({
 
   const handleToggleTrustProxy = async (val: boolean) => {
     try {
-      setIpSaving(true);
+      setProxySaving(true);
       const res = await apiFetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -260,7 +261,7 @@ export default function SecuritySettings({
     } catch (err: any) {
       setErrorMsg(err.message || "Failed to update trust proxy");
     } finally {
-      setIpSaving(false);
+      setProxySaving(false);
     }
   };
 
@@ -278,6 +279,8 @@ export default function SecuritySettings({
         throw new Error(data.error || "Failed to update allowed IPs");
       }
       setAllowedIpsText(Array.isArray(data.allowedIps) ? data.allowedIps.join("\n") : ips.join("\n"));
+      setFlagHeader(typeof data.proxyFlagHeader === "string" ? data.proxyFlagHeader : flagHeader.trim());
+      setFlagValue(typeof data.proxyFlagValue === "string" ? data.proxyFlagValue : flagValue.trim());
       setSuccessMsg(ips.length === 0 ? "IP allowlist cleared. Virtual Key is required when the gate is on." : `Saved ${ips.length} allowlist ${ips.length === 1 ? "entry" : "entries"}.`);
     } catch (err: any) {
       setErrorMsg(err.message || "Failed to update allowed IPs");
@@ -330,18 +333,11 @@ export default function SecuritySettings({
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Page Header */}
-      <div className="bg-white border border-neutral-200 rounded-2xl p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center space-x-3.5">
-          <div className="p-3 bg-neutral-100 border border-neutral-200 text-neutral-800 rounded-xl">
-            <Lock className="w-6 h-6" />
-          </div>
-          <div>
-            <h2 className="text-lg font-display font-bold text-neutral-800">Security & Access Control</h2>
-            <p className="text-xs text-neutral-500">Configure management console login and API proxy authentication gates</p>
-          </div>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h3 className="font-display font-semibold text-neutral-800 text-base">Security & Access Control</h3>
+          <p className="text-xs text-neutral-500">Configure management console login and API proxy authentication gates</p>
         </div>
-        
         {enableAdminAuth && (
           <button
             onClick={onLogout}
@@ -374,6 +370,7 @@ export default function SecuritySettings({
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="space-y-6">
         {/* Section 1: Management Console Auth */}
         <div className="bg-white border border-neutral-200 rounded-2xl p-6 shadow-xs flex flex-col justify-between space-y-6">
           <div className="space-y-4">
@@ -454,8 +451,6 @@ export default function SecuritySettings({
           </form>
         </div>
 
-        {/* Section 2: API Proxy Security & Debug Mode */}
-        <div className="space-y-6 flex flex-col justify-between">
           {/* Virtual Key Proxy Gate */}
           <div className="bg-white border border-neutral-200 rounded-2xl p-6 shadow-xs space-y-4">
             <div className="flex items-center justify-between">
@@ -508,7 +503,7 @@ export default function SecuritySettings({
                     <input
                       type="checkbox"
                       checked={trustProxy}
-                      disabled={ipSaving}
+                      disabled={proxySaving}
                       onChange={(e) => handleToggleTrustProxy(e.target.checked)}
                       className="sr-only peer"
                     />
@@ -550,15 +545,19 @@ export default function SecuritySettings({
                     type="button"
                     disabled={ipSaving}
                     onClick={handleSaveAllowedIps}
-                    className="bg-neutral-900 text-white hover:bg-neutral-800 disabled:opacity-40 px-3.5 py-2 rounded-xl text-xs font-semibold transition-colors shadow-2xs cursor-pointer"
+                    className="w-full bg-neutral-900 hover:bg-neutral-800 active:bg-neutral-950 disabled:opacity-40 text-white font-semibold py-2.5 px-3 rounded-xl text-xs flex items-center justify-center space-x-1.5 transition-all shadow-xs cursor-pointer"
                   >
-                    {ipSaving ? "Saving..." : "Save Allowlist"}
+                    <Save className="w-3.5 h-3.5" />
+                    <span>{ipSaving ? "Saving..." : "Save Allowlist"}</span>
                   </button>
                 </div>
               </div>
             )}
           </div>
 
+        </div>
+
+        <div className="space-y-6">
           {/* Proxy Logging Detail */}
           <div className="bg-white border border-neutral-200 rounded-2xl p-6 shadow-xs space-y-4">
             <div className="flex items-center justify-between">

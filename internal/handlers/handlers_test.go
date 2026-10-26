@@ -227,3 +227,37 @@ func TestHandleUpdateSettingsAllowedIPs(t *testing.T) {
 		t.Fatalf("invalid CIDR status = %d, want 400", w2.Code)
 	}
 }
+
+func TestHandleUpdateSettingsProxyFlagRoundTrip(t *testing.T) {
+	m := newTestManager(t)
+	body, _ := json.Marshal(map[string]interface{}{
+		"proxyFlagHeader": "X-Proxy-Flag",
+		"proxyFlagValue":  "s3cret",
+	})
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	m.HandleUpdateSettings(w, req)
+	if w.Code != 200 {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	var out domain.Settings
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.ProxyFlagHeader != "X-Proxy-Flag" || out.ProxyFlagValue != "s3cret" {
+		t.Fatalf("PUT response flags = %q/%q", out.ProxyFlagHeader, out.ProxyFlagValue)
+	}
+
+	gw := httptest.NewRecorder()
+	m.HandleGetSettings(gw, httptest.NewRequest(http.MethodGet, "/api/settings", nil))
+	if gw.Code != 200 {
+		t.Fatalf("GET status = %d body=%s", gw.Code, gw.Body.String())
+	}
+	var got domain.Settings
+	if err := json.Unmarshal(gw.Body.Bytes(), &got); err != nil {
+		t.Fatalf("GET unmarshal: %v", err)
+	}
+	if got.ProxyFlagHeader != "X-Proxy-Flag" || got.ProxyFlagValue != "s3cret" {
+		t.Fatalf("GET flags = %q/%q, want X-Proxy-Flag/s3cret", got.ProxyFlagHeader, got.ProxyFlagValue)
+	}
+}

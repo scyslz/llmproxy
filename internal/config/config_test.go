@@ -157,3 +157,24 @@ func TestNewRejectsInvalidAllowedIP(t *testing.T) {
 		t.Fatal("expected error for invalid allowedIps")
 	}
 }
+
+func TestNewLoadsProxyFlag(t *testing.T) {
+	dir := writeConfig(t, `{
+		"listen": ":3000",
+		"proxyFlagHeader": "X-Proxy-Flag",
+		"proxyFlagValue": "s3cret",
+		"providers": [{"id":"a","name":"A","baseUrl":"http://a","apiKey":"k","enabled":true}]
+	}`)
+	m, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	cfg := m.Get()
+	if cfg.ProxyFlagHeader != "X-Proxy-Flag" || cfg.ProxyFlagValue != "s3cret" {
+		t.Fatalf("proxy flag = %q/%q", cfg.ProxyFlagHeader, cfg.ProxyFlagValue)
+	}
+	s := m.Settings()
+	if s.ProxyFlagHeader != "X-Proxy-Flag" || s.ProxyFlagValue != "s3cret" {
+		t.Fatalf("settings flag = %q/%q", s.ProxyFlagHeader, s.ProxyFlagValue)
+	}
+}
