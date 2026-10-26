@@ -131,50 +131,9 @@ func TestNewRejectsNegativeMaxRequestBodyMB(t *testing.T) {
 	}
 }
 
-func TestNewLoadsAllowedIPsAndTrustProxy(t *testing.T) {
-	dir := writeConfig(t, `{
-		"listen": ":3000",
-		"trustProxy": true,
-		"allowedIps": ["127.0.0.1", "10.0.0.0/8"],
-		"providers": [{"id":"a","name":"A","baseUrl":"http://a","apiKey":"k","enabled":true}]
-	}`)
-	m, err := New(dir)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	cfg := m.Get()
-	if !cfg.TrustProxy {
-		t.Fatal("trustProxy want true")
-	}
-	if len(cfg.AllowedIPs) != 2 {
-		t.Fatalf("allowedIps = %#v", cfg.AllowedIPs)
-	}
-}
-
 func TestNewRejectsInvalidAllowedIP(t *testing.T) {
 	dir := writeConfig(t, `{"listen":":3000","allowedIps":["nope"]}`)
 	if _, err := New(dir); err == nil {
 		t.Fatal("expected error for invalid allowedIps")
-	}
-}
-
-func TestNewLoadsProxyFlag(t *testing.T) {
-	dir := writeConfig(t, `{
-		"listen": ":3000",
-		"proxyFlagHeader": "X-Proxy-Flag",
-		"proxyFlagValue": "s3cret",
-		"providers": [{"id":"a","name":"A","baseUrl":"http://a","apiKey":"k","enabled":true}]
-	}`)
-	m, err := New(dir)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	cfg := m.Get()
-	if cfg.ProxyFlagHeader != "X-Proxy-Flag" || cfg.ProxyFlagValue != "s3cret" {
-		t.Fatalf("proxy flag = %q/%q", cfg.ProxyFlagHeader, cfg.ProxyFlagValue)
-	}
-	s := m.Settings()
-	if s.ProxyFlagHeader != "X-Proxy-Flag" || s.ProxyFlagValue != "s3cret" {
-		t.Fatalf("settings flag = %q/%q", s.ProxyFlagHeader, s.ProxyFlagValue)
 	}
 }

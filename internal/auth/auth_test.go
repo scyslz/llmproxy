@@ -10,34 +10,15 @@ func TestClientIPRemoteAddr(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = "203.0.113.10:54321"
 	req.Header.Set("X-Real-IP", "10.0.0.9")
-	if got := ClientIP(req, false); got != "203.0.113.10" {
-		t.Fatalf("got %q, want TCP peer", got)
-	}
-}
-
-func TestClientIPTrustRealIP(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.RemoteAddr = "203.0.113.10:54321"
-	req.Header.Set("X-Real-IP", "198.51.100.7")
-	req.Header.Set("X-Forwarded-For", "192.0.2.1, 10.0.0.1")
-	if got := ClientIP(req, true); got != "198.51.100.7" {
-		t.Fatalf("got %q, want X-Real-IP", got)
-	}
-}
-
-func TestClientIPTrustForwardedFor(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.RemoteAddr = "203.0.113.10:54321"
-	req.Header.Set("X-Forwarded-For", "not-an-ip, 192.0.2.44, 10.0.0.1")
-	if got := ClientIP(req, true); got != "192.0.2.44" {
-		t.Fatalf("got %q, want first valid XFF hop", got)
+	if got := ClientIP(req); got != "203.0.113.10" {
+		t.Fatalf("got %q, want TCP peer (headers ignored)", got)
 	}
 }
 
 func TestClientIPMappedIPv6(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = "[::ffff:192.168.1.10]:80"
-	if got := ClientIP(req, false); got != "192.168.1.10" {
+	if got := ClientIP(req); got != "192.168.1.10" {
 		t.Fatalf("got %q, want mapped IPv4", got)
 	}
 }

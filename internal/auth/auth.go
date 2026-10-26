@@ -153,41 +153,13 @@ func remoteIP(r *http.Request) string {
 	return strings.TrimSpace(host)
 }
 
-// ClientIP returns the request client address used for allowlist matching.
-// When trustProxy is false only the TCP peer is used. When true, X-Real-IP
-// is preferred, then the leftmost valid X-Forwarded-For hop. If trustProxy is
-// true but no header yields a valid IP, an empty string is returned so callers
-// can reject instead of falling back to the spoofable proxy address.
-func ClientIP(r *http.Request, trustProxy bool) string {
+// ClientIP returns the TCP peer address used for allowlist matching. The
+// kernel-provided peer cannot be spoofed, so allowlist decisions stay sound.
+func ClientIP(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
-	if trustProxy {
-		if ip := parseIPLiteral(r.Header.Get("X-Real-IP")); ip != nil {
-			return ip.String()
-		}
-		for _, part := range strings.Split(r.Header.Get("X-Forwarded-For"), ",") {
-			if ip := parseIPLiteral(part); ip != nil {
-				return ip.String()
-			}
-		}
-		return ""
-	}
 	return remoteIP(r)
-}
-
-// ProxyFlagPresent reports whether the reverse-proxy marker header carries the
-// expected secret value. An empty configured value disables flag checking.
-func ProxyFlagPresent(r *http.Request, header, value string) bool {
-	if header == "" {
-		return false
-	}
-	got := strings.TrimSpace(r.Header.Get(header))
-	if value == "" {
-		// No secret configured: require the header to exist and be non-empty.
-		return got != ""
-	}
-	return got == value
 }
 
 // IPAllowed reports whether ipStr matches any exact IP or CIDR in cidrs.

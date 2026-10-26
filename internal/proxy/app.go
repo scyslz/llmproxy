@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -182,12 +183,22 @@ func keyMatched(cfg *domain.Config, apiKey string) bool {
 }
 
 func authorizeRequest(cfg *domain.Config, r *http.Request, apiKey string) (ok bool, clientIP string, bypassByIP bool) {
-	// 反代标记头值匹配时才采信转发头（信任代理）；直连无标记只用 TCP 对端。
-	trust := cfg.TrustProxy || auth.ProxyFlagPresent(r, cfg.ProxyFlagHeader, cfg.ProxyFlagValue)
-	clientIP = auth.ClientIP(r, trust)
-	// 信任代理但转发头取不到合法 IP：拒绝，不回退 RemoteAddr（可被反代地址冒用）。
-	if trust && clientIP == "" {
+	// 内外网判别：反代会写 X-Real-IP / X-Forwarded-For，直连不会带。
+	// 带转发头 => 外网流量，不走白名单，必须持有效 key；
+	// 不带 => 内网直连，用 TCP 对端（不可伪造）匹配白名单。
+	if external := r.Header.Get("X-Real-IP") != "" || r.Header.Get("X-Forwarded-For") != ""; external {
+		if keyMatched(cfg, apiKey) {
+			return true, "", false
+		}
+		if !cfg.EnableVirtualKey || len(cfg.Keys) == 0 {
+			return true, "", false
+		}
 		return false, "", false
+	}
+	clientIP = auth.ClientIP(r)
+	// 本机回环直连默认可信。
+	if ip := net.ParseIP(clientIP); ip != nil && ip.IsLoopback() {
+		return true, clientIP, true
 	}
 	if !cfg.EnableVirtualKey {
 		return true, clientIP, false

@@ -108,7 +108,6 @@ func defaultConfig() *domain.Config {
 		ActiveLogFile:    1,
 		MaxRequestBodyMB: 10,
 		AllowedIPs:       []string{},
-		TrustProxy:       false,
 		Providers: []domain.Provider{
 			{ID: "gemini", Name: "Google Gemini", BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai", APIKey: os.Getenv("GEMINI_API_KEY"), Enabled: true, Models: []string{"gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash"}, Timeout: 120000},
 			{ID: "openai", Name: "OpenAI", BaseURL: "https://api.openai.com", Enabled: false, Models: []string{"gpt-4o", "gpt-4o-mini", "o1-mini"}, Timeout: 120000},
@@ -133,9 +132,6 @@ type rawConfig struct {
 	ActiveLogFile    *int           `json:"activeLogFile"`
 	MaxRequestBodyMB *int           `json:"maxRequestBodyMB"`
 	AllowedIPs       []string       `json:"allowedIps"`
-	TrustProxy       *bool          `json:"trustProxy"`
-	ProxyFlagHeader  *string        `json:"proxyFlagHeader"`
-	ProxyFlagValue   *string        `json:"proxyFlagValue"`
 	Providers        []rawProvider  `json:"providers"`
 	Groups           []rawGroup     `json:"groups"`
 	Keys             []rawKey       `json:"keys"`
@@ -221,13 +217,6 @@ func mergeConfig(base *domain.Config, raw *rawConfig, m map[string]json.RawMessa
 		} else {
 			out.AllowedIPs = raw.AllowedIPs
 		}
-	}
-	out.TrustProxy = boolOr(raw.TrustProxy, base.TrustProxy)
-	if _, ok := m["proxyFlagHeader"]; ok && raw.ProxyFlagHeader != nil {
-		out.ProxyFlagHeader = strings.TrimSpace(*raw.ProxyFlagHeader)
-	}
-	if _, ok := m["proxyFlagValue"]; ok && raw.ProxyFlagValue != nil {
-		out.ProxyFlagValue = strings.TrimSpace(*raw.ProxyFlagValue)
 	}
 	if raw.Providers != nil {
 		ps := make([]domain.Provider, 0, len(raw.Providers))

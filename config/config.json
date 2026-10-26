@@ -9,6 +9,9 @@
   "maxRequestLogs": 100000,
   "activeLogFile": 1,
   "maxRequestBodyMB": 10,
+  "trustProxy": true,
+  "proxyFlagHeader": "xsss1212",
+  "proxyFlagValue": "55551212",
   "providers": [
     {
       "id": "mock",

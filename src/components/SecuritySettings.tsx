@@ -38,11 +38,7 @@ export default function SecuritySettings({
   const [customRequestBodyInput, setCustomRequestBodyInput] = useState<string>("");
   const [logLoading, setLogLoading] = useState(true);
   const [allowedIpsText, setAllowedIpsText] = useState("");
-  const [trustProxy, setTrustProxy] = useState(false);
   const [ipSaving, setIpSaving] = useState(false);
-  const [proxySaving, setProxySaving] = useState(false);
-  const [flagHeader, setFlagHeader] = useState("");
-  const [flagValue, setFlagValue] = useState("");
 
   const fetchLogStatusAndSettings = async () => {
     try {
@@ -67,9 +63,6 @@ export default function SecuritySettings({
            setMaxRequestBodyMB(setData.maxRequestBodyMB);
          }
          setAllowedIpsText(Array.isArray(setData.allowedIps) ? setData.allowedIps.join("\n") : "");
-         setTrustProxy(setData.trustProxy === true);
-         setFlagHeader(typeof setData.proxyFlagHeader === "string" ? setData.proxyFlagHeader : "");
-         setFlagValue(typeof setData.proxyFlagValue === "string" ? setData.proxyFlagValue : "");
        }
        if (reqStatsRes && reqStatsRes.ok) {
          const statsData = await reqStatsRes.json();
@@ -106,9 +99,6 @@ export default function SecuritySettings({
             setMaxRequestBodyMB(setData.maxRequestBodyMB);
           }
           setAllowedIpsText(Array.isArray(setData.allowedIps) ? setData.allowedIps.join("\n") : "");
-          setTrustProxy(setData.trustProxy === true);
-          setFlagHeader(typeof setData.proxyFlagHeader === "string" ? setData.proxyFlagHeader : "");
-          setFlagValue(typeof setData.proxyFlagValue === "string" ? setData.proxyFlagValue : "");
         }
         if (reqStatsRes && reqStatsRes.ok) {
           const statsData = await reqStatsRes.json();
@@ -244,27 +234,6 @@ export default function SecuritySettings({
   const parseAllowedIps = (text: string) =>
     text.split(/\r?\n/).map((s) => s.trim()).filter((s) => s.length > 0);
 
-  const handleToggleTrustProxy = async (val: boolean) => {
-    try {
-      setProxySaving(true);
-      const res = await apiFetch("/api/settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trustProxy: val })
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to update trust proxy");
-      }
-      setTrustProxy(val);
-      setSuccessMsg(val ? "Trust proxy enabled. X-Real-IP / X-Forwarded-For will be used." : "Trust proxy disabled. Only TCP peer address is used.");
-    } catch (err: any) {
-      setErrorMsg(err.message || "Failed to update trust proxy");
-    } finally {
-      setProxySaving(false);
-    }
-  };
-
   const handleSaveAllowedIps = async () => {
     const ips = parseAllowedIps(allowedIpsText);
     try {
@@ -272,15 +241,13 @@ export default function SecuritySettings({
       const res = await apiFetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ allowedIps: ips, proxyFlagHeader: flagHeader.trim(), proxyFlagValue: flagValue.trim() })
+        body: JSON.stringify({ allowedIps: ips })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(data.error || "Failed to update allowed IPs");
       }
       setAllowedIpsText(Array.isArray(data.allowedIps) ? data.allowedIps.join("\n") : ips.join("\n"));
-      setFlagHeader(typeof data.proxyFlagHeader === "string" ? data.proxyFlagHeader : flagHeader.trim());
-      setFlagValue(typeof data.proxyFlagValue === "string" ? data.proxyFlagValue : flagValue.trim());
       setSuccessMsg(ips.length === 0 ? "IP allowlist cleared. Virtual Key is required when the gate is on." : `Saved ${ips.length} allowlist ${ips.length === 1 ? "entry" : "entries"}.`);
     } catch (err: any) {
       setErrorMsg(err.message || "Failed to update allowed IPs");
@@ -492,47 +459,19 @@ export default function SecuritySettings({
 
             {enableVirtualKey && (
               <div className="space-y-3 pt-1 border-t border-neutral-150">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-semibold text-neutral-800">Trust reverse proxy</p>
-                    <p className="text-[11px] text-neutral-500 leading-relaxed mt-0.5">
-                      Off: match the TCP peer (direct connections only — Docker port mapping hides the real client IP). On: use X-Real-IP / X-Forwarded-For set by your reverse proxy.
-                    </p>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer shrink-0">
-                    <input
-                      type="checkbox"
-                      checked={trustProxy}
-                      disabled={proxySaving}
-                      onChange={(e) => handleToggleTrustProxy(e.target.checked)}
-                      className="sr-only peer"
-                    />
-                    <div className="w-11 h-6 bg-neutral-250 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-neutral-900"></div>
-                  </label>
+                <div className="p-3.5 bg-neutral-50 border border-neutral-200 rounded-xl text-[11px] text-neutral-600 leading-relaxed space-y-1">
+                  <p className="font-semibold text-neutral-800">How requests are verified</p>
+                  <p>
+                    <span className="font-semibold text-neutral-700">Internal (direct):</span> requests without X-Real-IP / X-Forwarded-For match the TCP peer address against the allowlist below. Loopback (127.0.0.1) is always trusted.
+                  </p>
+                  <p>
+                    <span className="font-semibold text-neutral-700">External (via reverse proxy):</span> requests carrying X-Real-IP / X-Forwarded-For always require a valid Virtual Key — the allowlist does not apply.
+                  </p>
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-neutral-800">IP allowlist (bypass key)</label>
+                  <label className="text-xs font-semibold text-neutral-800">IP allowlist (internal bypass key)</label>
                   <p className="text-[11px] text-neutral-500 leading-relaxed">
-                    One IPv4/IPv6 or CIDR per line. Matching clients skip the Virtual Key. Empty list requires a valid key.
-                  </p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <input
-                      type="text"
-                      value={flagHeader}
-                      onChange={(e) => setFlagHeader(e.target.value)}
-                      placeholder="Proxy flag header (e.g. X-Proxy-Flag)"
-                      className="bg-white border border-neutral-250 rounded-xl px-3 py-2 text-xs text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400"
-                    />
-                    <input
-                      type="text"
-                      value={flagValue}
-                      onChange={(e) => setFlagValue(e.target.value)}
-                      placeholder="Proxy flag secret value (optional)"
-                      className="bg-white border border-neutral-250 rounded-xl px-3 py-2 text-xs font-mono text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400"
-                    />
-                  </div>
-                  <p className="text-[11px] text-neutral-500 leading-relaxed">
-                    Only requests carrying this header (with the secret value, if set) trust X-Real-IP / X-Forwarded-For. Direct intranet clients have no flag and match the TCP peer against the allowlist.
+                    One IPv4/IPv6 or CIDR per line. Matching direct (internal) clients skip the Virtual Key. Empty list requires a valid key.
                   </p>
                   <textarea
                     value={allowedIpsText}
