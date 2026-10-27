@@ -8,7 +8,7 @@ Lightweight LLM API proxy with OpenAI-compatible endpoints and a web dashboard. 
 - **Streaming** — Full SSE support with hop-by-hop forwarding and incremental `usage`/`model` parsing
 - **Automatic Protocol Conversion** — Bidirectional `Chat Completions` (`/v1/chat/completions`) ↔ `Responses` (`/v1/responses`) conversion, including streaming, with per-model auto-probe
 - **Multi-Provider Management** — Configure multiple upstreams with automatic fallback along a candidate chain
-- **Virtual Keys** — `sk-proxy-*` key system with per-provider authorization and fine-grained access control
+- **Virtual Keys** — fixed `sk-proxy-` key prefix (auto-prepended to custom values), with per-provider authorization and fine-grained access control
 - **Model Fallback** — If the requested model is not in the provider's `models` list, automatically substitutes `defaultModel`
 - **Circuit Breaker & Concurrency Control** — Per-provider cooldown and semaphore-based concurrency limits
 - **Per-Provider Timeout** — Independent upstream timeout per provider; timeout returns `504` downstream and propagates disconnect
@@ -131,12 +131,22 @@ Docker Compose uses image `scyslz/llmproxy` without local build. Inside the cont
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `key` | string | Client key (`sk-proxy-*`) |
+| `key` | string | Client key; always starts with `sk-proxy-` (generated, or auto-prepended to custom values) |
 | `name` | string | Display name |
 | `providerIds` | string[] | Authorized provider ids; `["all"]` or `["*"]` means all enabled |
 | `groupId` | string | Optional group id (takes precedence over `providerIds`) |
 
 **Binding rules**: If `providerIds` has specific values, the provider's `enabled` flag is ignored and the array order defines fallback priority; `["all"]` or unbound uses the global enabled set.
+
+### Virtual Key Prefix
+
+The prefix is **fixed to `sk-proxy-`** and cannot be changed through the config or the dashboard.
+
+- Generated keys (`POST /api/keys` without a `key` field) are always `sk-proxy-<random>`, e.g. `sk-proxy-DMaEBifVlVKwUnLCIcznlLL3jJ5chRxv`.
+- Custom keys (`POST /api/keys {"name":"team","key":"team-abc"}`) are stored as given, but **`sk-proxy-` is prepended when missing** → `sk-proxy-team-abc`. A value that already starts with `sk-proxy-` is kept verbatim (never doubled).
+- Allowed characters: letters, digits, `-`, `_`, `.`; max 128 characters including the prefix. Duplicates return `409`.
+- Changing or removing this prefix is intentionally unsupported; existing keys are never rewritten.
+- A legacy `keyPrefix` field in an old `config.json` is ignored (and dropped on the next save).
 
 ## Protocol Auto-Conversion (Chat ↔ Responses)
 

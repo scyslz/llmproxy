@@ -121,35 +121,35 @@ func defaultConfig() *domain.Config {
 
 // rawConfig mirrors the JSON config allowing snake_case/Go-camel variants.
 type rawConfig struct {
-	Listen           *string        `json:"listen"`
-	EnableVirtualKey *bool          `json:"enableVirtualKey"`
-	EnableAdminAuth  *bool          `json:"enableAdminAuth"`
-	AdminPassword    *string        `json:"adminPassword"`
-	LogDetail        *string        `json:"logDetail"`
-	LogBody          *bool          `json:"logBody"`
-	MaxLogSizeMB     *int           `json:"maxLogSizeMB"`
-	MaxRequestLogs   *int           `json:"maxRequestLogs"`
-	ActiveLogFile    *int           `json:"activeLogFile"`
-	MaxRequestBodyMB *int           `json:"maxRequestBodyMB"`
-	AllowedIPs       []string       `json:"allowedIps"`
-	Providers        []rawProvider  `json:"providers"`
-	Groups           []rawGroup     `json:"groups"`
-	Keys             []rawKey       `json:"keys"`
+	Listen           *string       `json:"listen"`
+	EnableVirtualKey *bool         `json:"enableVirtualKey"`
+	EnableAdminAuth  *bool         `json:"enableAdminAuth"`
+	AdminPassword    *string       `json:"adminPassword"`
+	LogDetail        *string       `json:"logDetail"`
+	LogBody          *bool         `json:"logBody"`
+	MaxLogSizeMB     *int          `json:"maxLogSizeMB"`
+	MaxRequestLogs   *int          `json:"maxRequestLogs"`
+	ActiveLogFile    *int          `json:"activeLogFile"`
+	MaxRequestBodyMB *int          `json:"maxRequestBodyMB"`
+	AllowedIPs       []string      `json:"allowedIps"`
+	Providers        []rawProvider `json:"providers"`
+	Groups           []rawGroup    `json:"groups"`
+	Keys             []rawKey      `json:"keys"`
 }
 
 type rawProvider struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name"`
-	BaseURL        string   `json:"baseUrl"`
-	APIKey         string   `json:"apiKey"`
-	Enabled        *bool    `json:"enabled"`
-	Models         []string `json:"models"`
-	Concurrency    *int     `json:"concurrency"`
-	Timeout        *int     `json:"timeout"`
-	OpenAIEndpoint    string `json:"openaiEndpoint"` // legacy alias, migrated to ChatEndpoint
-	ChatEndpoint      string `json:"chatEndpoint"`
-	ResponsesEndpoint string `json:"responsesEndpoint"`
-	DefaultModel   string   `json:"defaultModel"`
+	ID                  string         `json:"id"`
+	Name                string         `json:"name"`
+	BaseURL             string         `json:"baseUrl"`
+	APIKey              string         `json:"apiKey"`
+	Enabled             *bool          `json:"enabled"`
+	Models              []string       `json:"models"`
+	Concurrency         *int           `json:"concurrency"`
+	Timeout             *int           `json:"timeout"`
+	OpenAIEndpoint      string         `json:"openaiEndpoint"` // legacy alias, migrated to ChatEndpoint
+	ChatEndpoint        string         `json:"chatEndpoint"`
+	ResponsesEndpoint   string         `json:"responsesEndpoint"`
+	DefaultModel        string         `json:"defaultModel"`
 	ModelContextLengths map[string]int `json:"modelContextLengths,omitempty"`
 	ModelMaxOutputs     map[string]int `json:"modelMaxOutputs,omitempty"`
 	// Legacy/alternate field names kept for compatibility.
@@ -173,10 +173,10 @@ type rawGroupEntry struct {
 }
 
 type rawGroup struct {
-	ID      string           `json:"id"`
-	Name    string           `json:"name"`
-	Entries []rawGroupEntry  `json:"entries"`
-	CreatedAt string         `json:"createdAt"`
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Entries   []rawGroupEntry `json:"entries"`
+	CreatedAt string          `json:"createdAt"`
 }
 
 func boolOr(v *bool, def bool) bool {
@@ -248,13 +248,13 @@ func mergeConfig(base *domain.Config, raw *rawConfig, m map[string]json.RawMessa
 
 func (rp rawProvider) toProvider() domain.Provider {
 	p := domain.Provider{
-		ID:             rp.ID,
-		Name:           rp.Name,
-		BaseURL:        orString(rp.BaseURL, rp.BaseUrl2),
-		APIKey:         orString(rp.APIKey, rp.APIKey2),
-		Models:         rp.Models,
-		ChatEndpoint:      orString(rp.ChatEndpoint, orString(rp.OpenAIEndpoint, rp.OpenA2)),
-		ResponsesEndpoint: rp.ResponsesEndpoint,
+		ID:                  rp.ID,
+		Name:                rp.Name,
+		BaseURL:             orString(rp.BaseURL, rp.BaseUrl2),
+		APIKey:              orString(rp.APIKey, rp.APIKey2),
+		Models:              rp.Models,
+		ChatEndpoint:        orString(rp.ChatEndpoint, orString(rp.OpenAIEndpoint, rp.OpenA2)),
+		ResponsesEndpoint:   rp.ResponsesEndpoint,
 		DefaultModel:        orString(rp.DefaultModel, rp.Default2),
 		ModelContextLengths: rp.ModelContextLengths,
 		ModelMaxOutputs:     rp.ModelMaxOutputs,

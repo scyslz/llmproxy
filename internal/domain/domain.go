@@ -2,17 +2,17 @@ package domain
 
 // Provider describes a single upstream LLM provider.
 type Provider struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name"`
-	BaseURL        string   `json:"baseUrl"`
-	APIKey         string   `json:"apiKey,omitempty"`
-	Enabled        bool     `json:"enabled"`
-	Models         []string `json:"models,omitempty"`
-	Concurrency    int      `json:"concurrency,omitempty"` // 0 or unset = unlimited
-	Timeout        int      `json:"timeout,omitempty"`     // upstream request timeout in ms, 0 or unset = none
-	ChatEndpoint      string `json:"chatEndpoint,omitempty"`
-	ResponsesEndpoint string `json:"responsesEndpoint,omitempty"`
-	DefaultModel   string   `json:"defaultModel,omitempty"`
+	ID                string   `json:"id"`
+	Name              string   `json:"name"`
+	BaseURL           string   `json:"baseUrl"`
+	APIKey            string   `json:"apiKey,omitempty"`
+	Enabled           bool     `json:"enabled"`
+	Models            []string `json:"models,omitempty"`
+	Concurrency       int      `json:"concurrency,omitempty"` // 0 or unset = unlimited
+	Timeout           int      `json:"timeout,omitempty"`     // upstream request timeout in ms, 0 or unset = none
+	ChatEndpoint      string   `json:"chatEndpoint,omitempty"`
+	ResponsesEndpoint string   `json:"responsesEndpoint,omitempty"`
+	DefaultModel      string   `json:"defaultModel,omitempty"`
 	// Protocol 声明该 provider 接受的对话协议：chat（/v1/chat/completions）或
 	// responses（/v1/responses）。空字符串表示未知，由代理在运行时按 404 探测。
 	Protocol string `json:"protocol,omitempty"`
@@ -23,6 +23,10 @@ type Provider struct {
 	// ModelMaxOutputs 按 model id 记录单次最大输出（token）。
 	ModelMaxOutputs map[string]int `json:"modelMaxOutputs,omitempty"`
 }
+
+// DefaultKeyPrefix is the fixed prefix of every virtual key. Generated keys
+// always start with it, and caller-supplied keys get it prepended when missing.
+const DefaultKeyPrefix = "sk-proxy-"
 
 // VirtualKey maps a client-facing key to a set of authorized providers.
 type VirtualKey struct {
@@ -41,33 +45,33 @@ type GroupEntry struct {
 
 // ProviderGroup is an ordered set of provider/model entries used as a fallback chain.
 type ProviderGroup struct {
-	ID          string      `json:"id"`
-	Name        string      `json:"name"`
-	Entries     []GroupEntry `json:"entries"`
-	CreatedAt   string      `json:"createdAt"`
+	ID        string       `json:"id"`
+	Name      string       `json:"name"`
+	Entries   []GroupEntry `json:"entries"`
+	CreatedAt string       `json:"createdAt"`
 }
 
 // Settings is the subset of config exposed to the dashboard settings API.
 type Settings struct {
-	EnableVirtualKey bool   `json:"enableVirtualKey"`
-	EnableAdminAuth  bool   `json:"enableAdminAuth"`
-	LogDetail        string `json:"logDetail"`
-	LogBody          bool   `json:"logBody"`
-	MaxLogSizeMB      int      `json:"maxLogSizeMB"`
-	MaxRequestLogs    int      `json:"maxRequestLogs"`
-	ActiveLogFile     int      `json:"activeLogFile"`
-	MaxRequestBodyMB  int      `json:"maxRequestBodyMB"`
-	AllowedIPs        []string `json:"allowedIps"`
+	EnableVirtualKey bool     `json:"enableVirtualKey"`
+	EnableAdminAuth  bool     `json:"enableAdminAuth"`
+	LogDetail        string   `json:"logDetail"`
+	LogBody          bool     `json:"logBody"`
+	MaxLogSizeMB     int      `json:"maxLogSizeMB"`
+	MaxRequestLogs   int      `json:"maxRequestLogs"`
+	ActiveLogFile    int      `json:"activeLogFile"`
+	MaxRequestBodyMB int      `json:"maxRequestBodyMB"`
+	AllowedIPs       []string `json:"allowedIps"`
 }
 
 // Config is the runtime configuration persisted to config/config.json.
 type Config struct {
-	Listen           string       `json:"listen"`
-	EnableVirtualKey bool         `json:"enableVirtualKey"`
-	EnableAdminAuth  bool         `json:"enableAdminAuth"`
-	AdminPassword    string       `json:"adminPassword,omitempty"`
-	LogDetail        string       `json:"logDetail"`
-	LogBody          bool         `json:"logBody"`
+	Listen           string          `json:"listen"`
+	EnableVirtualKey bool            `json:"enableVirtualKey"`
+	EnableAdminAuth  bool            `json:"enableAdminAuth"`
+	AdminPassword    string          `json:"adminPassword,omitempty"`
+	LogDetail        string          `json:"logDetail"`
+	LogBody          bool            `json:"logBody"`
 	MaxLogSizeMB     int             `json:"maxLogSizeMB"`
 	MaxRequestLogs   int             `json:"maxRequestLogs"`
 	ActiveLogFile    int             `json:"activeLogFile"`

@@ -1,8 +1,10 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -135,5 +137,63 @@ func TestNewRejectsInvalidAllowedIP(t *testing.T) {
 	dir := writeConfig(t, `{"listen":":3000","allowedIps":["nope"]}`)
 	if _, err := New(dir); err == nil {
 		t.Fatal("expected error for invalid allowedIps")
+	}
+}
+
+func TestNewIgnoresKeyPrefixSetting(t *testing.T) {
+	// keyPrefix is no longer configurable: old configs must still load, and the
+	// prefix in the file must have no effect on existing keys.
+	dir := writeConfig(t, `{"listen":":3000","keyPrefix":"sk-mine-","keys":[{"key":"sk-proxy-old","name":"old"}]}`)
+	m, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	cfg := m.Get()
+	if len(cfg.Keys) != 1 || cfg.Keys[0].Key != "sk-proxy-old" {
+		t.Fatalf("existing key was modified: %+v", cfg.Keys)
+	}
+	blob, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(blob), "keyPrefix") {
+		t.Fatal("keyPrefix should not be persisted any more")
+	}
+}
+
+func TestEnsureKeyPrefix(t *testing.T) {
+	cases := map[string]string{
+		"team-abc":            "sk-proxy-team-abc",
+		"sk-proxy-team-abc":   "sk-proxy-team-abc",
+		"  sk-proxy-spaced  ": "sk-proxy-spaced",
+		"My_Key.1":            "sk-proxy-My_Key.1",
+	}
+	for in, want := range cases {
+		got, err := EnsureKeyPrefix(in)
+		if err != nil {
+			t.Fatalf("EnsureKeyPrefix(%q): %v", in, err)
+		}
+		if got != want {
+			t.Fatalf("EnsureKeyPrefix(%q) = %q, want %q", in, got, want)
+		}
+	}
+	for _, bad := range []string{"", "   ", "has space", "slash/key", "quote\"key"} {
+		if _, err := EnsureKeyPrefix(bad); err == nil {
+			t.Fatalf("expected error for %q", bad)
+		}
+	}
+	// Prefix is not duplicated when the value is exactly the prefix.
+	if got, err := EnsureKeyPrefix("sk-proxy-"); err != nil || got != "sk-proxy-" {
+		t.Fatalf("EnsureKeyPrefix(sk-proxy-) = %q, %v", got, err)
+	}
+}
+
+func TestGenerateKeyHasFixedPrefix(t *testing.T) {
+	k, err := GenerateKey()
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	if len(k) <= len("sk-proxy-") || k[:len("sk-proxy-")] != "sk-proxy-" {
+		t.Fatalf("generated key %q missing fixed prefix", k)
 	}
 }

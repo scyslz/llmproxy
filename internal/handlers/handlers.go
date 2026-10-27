@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"encoding/json"
-	"math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -213,11 +212,11 @@ func (m *Manager) HandleGetSettings(w http.ResponseWriter, _ *http.Request) {
 
 func (m *Manager) HandleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		EnableVirtualKey *bool   `json:"enableVirtualKey"`
-		EnableAdminAuth  *bool   `json:"enableAdminAuth"`
-		AdminPassword    *string `json:"adminPassword"`
-		LogDetail        *string `json:"logDetail"`
-		LogBody          *bool   `json:"logBody"`
+		EnableVirtualKey *bool     `json:"enableVirtualKey"`
+		EnableAdminAuth  *bool     `json:"enableAdminAuth"`
+		AdminPassword    *string   `json:"adminPassword"`
+		LogDetail        *string   `json:"logDetail"`
+		LogBody          *bool     `json:"logBody"`
 		MaxLogSizeMB     *int      `json:"maxLogSizeMB"`
 		MaxRequestLogs   *int      `json:"maxRequestLogs"`
 		MaxRequestBodyMB *int      `json:"maxRequestBodyMB"`
@@ -298,6 +297,7 @@ func (m *Manager) HandleListKeys(w http.ResponseWriter, _ *http.Request) {
 func (m *Manager) HandleCreateKey(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name        string   `json:"name"`
+		Key         string   `json:"key"` // optional: caller-supplied key, stored verbatim
 		ProviderIDs []string `json:"providerIds"`
 		GroupID     string   `json:"groupId"`
 	}
@@ -309,15 +309,11 @@ func (m *Manager) HandleCreateKey(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]string{"error": "Key name is required"})
 		return
 	}
-	b := make([]byte, 24)
-	rand.Read(b)
-	key := "sk-proxy-" + strings.TrimRight(strings.ReplaceAll(string(b), "/", "a"), "=")
-	// Use URL-safe base64
-	var b64 [32]byte
-	for i := range b64 {
-		b64[i] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"[int(b[i%len(b)])%64]
+	key, err := m.resolveNewKey(body.Key)
+	if err != nil {
+		writeJSON(w, 400, map[string]string{"error": err.Error()})
+		return
 	}
-	key = "sk-proxy-" + string(b64[:])
 	vk := domain.VirtualKey{
 		Key:         key,
 		Name:        body.Name,
@@ -325,14 +321,44 @@ func (m *Manager) HandleCreateKey(w http.ResponseWriter, r *http.Request) {
 		ProviderIDs: body.ProviderIDs,
 		CreatedAt:   time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
 	}
+	duplicate := false
 	if err := m.Cfg.Update(func(c *domain.Config) {
+		for _, existing := range c.Keys {
+			if existing.Key == key {
+				duplicate = true
+				return
+			}
+		}
 		c.Keys = append(c.Keys, vk)
 	}); err != nil {
 		writeJSON(w, 500, map[string]string{"error": err.Error()})
 		return
 	}
-	m.Log.Log(logging.LevelInfo, "Created virtual key: "+body.Name+" ("+key[:12]+"...)", "system", "")
+	if duplicate {
+		writeJSON(w, 409, map[string]string{"error": "Virtual key already exists"})
+		return
+	}
+	m.Log.Log(logging.LevelInfo, "Created virtual key: "+body.Name+" ("+maskKey(key)+")", "system", "")
 	writeJSON(w, 201, vk)
+}
+
+// resolveNewKey returns the key to store for a new virtual key. A caller-supplied
+// value is kept as given, with the fixed "sk-proxy-" prefix prepended when it is
+// missing; otherwise a random key with that prefix is generated.
+func (m *Manager) resolveNewKey(custom string) (string, error) {
+	if strings.TrimSpace(custom) != "" {
+		return config.EnsureKeyPrefix(custom)
+	}
+	return config.GenerateKey()
+}
+
+// maskKey shortens a key for log output without ever logging it in full.
+func maskKey(key string) string {
+	const visible = 12
+	if len(key) <= visible {
+		return key
+	}
+	return key[:visible] + "..."
 }
 
 func (m *Manager) HandleDeleteKey(w http.ResponseWriter, _ *http.Request, key string) {

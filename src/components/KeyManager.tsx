@@ -8,7 +8,7 @@ interface KeyManagerProps {
   groups: ProviderGroup[];
   enableVirtualKey: boolean;
   onToggleVirtualKey: (enabled: boolean) => void;
-  onCreateKey: (name: string, providerIds: string[], groupId?: string) => void;
+  onCreateKey: (name: string, providerIds: string[], groupId?: string, customKey?: string) => void;
   onUpdateKey: (keyStr: string, name: string, providerIds: string[], groupId?: string) => void;
   onDeleteKey: (keyStr: string) => void;
 }
@@ -31,6 +31,7 @@ export default function KeyManager({
   const [isAdding, setIsAdding] = useState(false);
   const [editingKey, setEditingKey] = useState<VirtualKey | null>(null);
   const [confirmDeleteKey, setConfirmDeleteKey] = useState<string | null>(null);
+  const [customKey, setCustomKey] = useState("");
 
   const handleCopy = (keyStr: string) => {
     navigator.clipboard.writeText(keyStr);
@@ -61,9 +62,10 @@ export default function KeyManager({
     if (editingKey) {
       onUpdateKey(editingKey.key, name.trim(), finalProviders, selectedGroupId || undefined);
     } else {
-      onCreateKey(name.trim(), finalProviders, selectedGroupId || undefined);
+      onCreateKey(name.trim(), finalProviders, selectedGroupId || undefined, customKey.trim() || undefined);
     }
     setName("");
+    setCustomKey("");
     setSelectedProviders([]);
     setScopeMode("all");
     setSelectedGroupId("");
@@ -88,6 +90,7 @@ export default function KeyManager({
 
   const cancelForm = () => {
     setName("");
+    setCustomKey("");
     setSelectedProviders([]);
     setScopeMode("all");
     setIsAdding(false);
@@ -161,6 +164,23 @@ export default function KeyManager({
                 className="w-full bg-white border border-neutral-250 rounded-xl px-3.5 py-2 text-sm text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400"
               />
             </div>
+
+            {!editingKey && (
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-neutral-500">Key Value (optional)</label>
+                <input
+                  type="text"
+                  placeholder="sk-proxy-auto-generated"
+                  value={customKey}
+                  onChange={(e) => setCustomKey(e.target.value)}
+                  spellCheck={false}
+                  className="w-full bg-white border border-neutral-250 rounded-xl px-3.5 py-2 text-sm font-mono text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400"
+                />
+                <p className="text-[10px] text-neutral-400">
+                  Leave blank to auto-generate. A custom value is kept as typed; the fixed <span className="font-mono">sk-proxy-</span> prefix is prepended when you omit it.
+                </p>
+              </div>
+            )}
 
             <div className="space-y-3">
               <label className="text-xs font-medium text-neutral-500 block">Allowed Providers (Scope)</label>

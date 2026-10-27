@@ -223,3 +223,91 @@ func TestHandleUpdateSettingsAllowedIPs(t *testing.T) {
 		t.Fatalf("invalid CIDR status = %d, want 400", w2.Code)
 	}
 }
+
+func postJSON(m *Manager, path, body string, handler func(http.ResponseWriter, *http.Request)) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler(w, req)
+	return w
+}
+
+func putJSON(m *Manager, path, body string, handler func(http.ResponseWriter, *http.Request)) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPut, path, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler(w, req)
+	return w
+}
+
+func TestHandleCreateKeyWithCustomKey(t *testing.T) {
+	m := newTestManager(t)
+	w := postJSON(m, "/api/keys", `{"name":"custom","key":"my-own_key.1","providerIds":["all"]}`, m.HandleCreateKey)
+	if w.Code != 201 {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var created domain.VirtualKey
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	// Custom values get the fixed prefix prepended when missing.
+	if created.Key != "sk-proxy-my-own_key.1" {
+		t.Fatalf("key = %q, want sk-proxy-my-own_key.1", created.Key)
+	}
+	cfg := m.Cfg.Get()
+	if len(cfg.Keys) != 1 || cfg.Keys[0].Key != "sk-proxy-my-own_key.1" {
+		t.Fatalf("stored keys = %+v", cfg.Keys)
+	}
+
+	// Already-prefixed values are stored verbatim (prefix never duplicated).
+	w2 := postJSON(m, "/api/keys", `{"name":"prefixed","key":"sk-proxy-team-a"}`, m.HandleCreateKey)
+	if w2.Code != 201 {
+		t.Fatalf("prefixed status = %d, body = %s", w2.Code, w2.Body.String())
+	}
+	var prefixed domain.VirtualKey
+	_ = json.Unmarshal(w2.Body.Bytes(), &prefixed)
+	if prefixed.Key != "sk-proxy-team-a" {
+		t.Fatalf("key = %q, want unchanged sk-proxy-team-a", prefixed.Key)
+	}
+
+	// Duplicate custom key is rejected and does not append.
+	w3 := postJSON(m, "/api/keys", `{"name":"dup","key":"sk-proxy-my-own_key.1"}`, m.HandleCreateKey)
+	if w3.Code != 409 {
+		t.Fatalf("duplicate status = %d, want 409", w3.Code)
+	}
+	if got := len(m.Cfg.Get().Keys); got != 2 {
+		t.Fatalf("keys after duplicate = %d, want 2", got)
+	}
+
+	// Invalid custom key is rejected.
+	w4 := postJSON(m, "/api/keys", `{"name":"bad","key":"bad key"}`, m.HandleCreateKey)
+	if w4.Code != 400 {
+		t.Fatalf("invalid status = %d, want 400", w4.Code)
+	}
+}
+
+func TestHandleCreateKeyAlwaysUsesFixedPrefix(t *testing.T) {
+	m := newTestManager(t)
+
+	// The prefix is no longer configurable; a legacy keyPrefix field is ignored
+	// and never exposed by the settings API.
+	w := putJSON(m, "/api/settings", `{"keyPrefix":"sk-mine-"}`, m.HandleUpdateSettings)
+	if w.Code != 200 {
+		t.Fatalf("settings status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var settings map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &settings)
+	if _, ok := settings["keyPrefix"]; ok {
+		t.Fatal("settings must not expose keyPrefix")
+	}
+
+	w2 := postJSON(m, "/api/keys", `{"name":"gen","providerIds":["all"]}`, m.HandleCreateKey)
+	if w2.Code != 201 {
+		t.Fatalf("create status = %d, body = %s", w2.Code, w2.Body.String())
+	}
+	var created domain.VirtualKey
+	_ = json.Unmarshal(w2.Body.Bytes(), &created)
+	if len(created.Key) <= len("sk-proxy-") || created.Key[:len("sk-proxy-")] != "sk-proxy-" {
+		t.Fatalf("generated key = %q, want sk-proxy- prefix", created.Key)
+	}
+}

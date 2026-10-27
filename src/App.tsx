@@ -211,14 +211,17 @@ export default function App() {
     }
   };
 
-  const handleCreateKey = async (name: string, providerIds: string[], groupId?: string) => {
+  const handleCreateKey = async (name: string, providerIds: string[], groupId?: string, customKey?: string) => {
     try {
       const res = await apiFetch("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, providerIds, groupId })
+        body: JSON.stringify({ name, providerIds, groupId, key: customKey })
       });
-      if (!res.ok) throw new Error("Failed to create virtual key");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Failed to create virtual key");
+      }
       const created = await res.json();
       setVirtualKeys((prev) => [...prev, created]);
     } catch (err: any) {
