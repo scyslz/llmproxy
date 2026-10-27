@@ -11,6 +11,96 @@ interface SecuritySettingsProps {
   onLogout: () => void;
 }
 
+const MB_OPTIONS = [1, 2, 5, 10, 20, 50, 100].map((n) => ({ value: n, label: `${n} MB` }));
+const RECORD_OPTIONS = [10000, 50000, 100000, 200000, 500000].map((n) => ({ value: n, label: n.toLocaleString() }));
+
+function LimitRow({ title, hint, children }: { title: string; hint: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-2 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+      <div className="min-w-0">
+        <p className="text-xs font-semibold text-neutral-800">{title}</p>
+        <p className="mt-0.5 text-[11px] leading-relaxed text-neutral-500">{hint}</p>
+      </div>
+      <div className="shrink-0">{children}</div>
+    </div>
+  );
+}
+
+function LimitSelect({
+  value,
+  options,
+  disabled,
+  onApply
+}: {
+  value: number;
+  options: { value: number; label: string }[];
+  disabled?: boolean;
+  onApply: (n: number) => void;
+}) {
+  const isPreset = options.some((o) => o.value === value);
+  const [showCustom, setShowCustom] = useState(!isPreset);
+  const [draft, setDraft] = useState(isPreset ? "" : String(value));
+  const next = Number(draft);
+  const canApply = draft.trim() !== "" && Number.isFinite(next) && next > 0;
+
+  const apply = () => {
+    if (canApply) onApply(Math.floor(next));
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <select
+        value={isPreset ? String(value) : "custom"}
+        disabled={disabled}
+        onChange={(e) => {
+          if (e.target.value === "custom") {
+            setShowCustom(true);
+            return;
+          }
+          setShowCustom(false);
+          setDraft("");
+          onApply(Number(e.target.value));
+        }}
+        className="h-9 w-36 cursor-pointer rounded-xl border border-neutral-250 bg-white px-2.5 text-xs font-semibold text-neutral-800 outline-none transition-colors focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+        <option value="custom">{isPreset ? "Custom…" : "Custom"}</option>
+      </select>
+      {showCustom && (
+        <>
+          <input
+            type="number"
+            min={1}
+            inputMode="numeric"
+            placeholder="Custom"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                apply();
+              }
+            }}
+            className="h-9 w-24 rounded-xl border border-neutral-250 bg-white px-2.5 font-mono text-xs text-neutral-800 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-400"
+          />
+          <button
+            type="button"
+            onClick={apply}
+            disabled={disabled || !canApply}
+            className="h-9 rounded-xl bg-neutral-900 px-3 text-xs font-semibold text-white transition-colors hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Apply
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function SecuritySettings({
   enableVirtualKey,
   onToggleVirtualKey,
@@ -30,12 +120,9 @@ export default function SecuritySettings({
   const [logActionLoading, setLogActionLoading] = useState(false);
   const [logDetail, setLogDetail] = useState<"off" | "basic" | "error" | "all">("basic");
   const [logBody, setLogBody] = useState<boolean>(false);
-  const [customSizeInput, setCustomSizeInput] = useState<string>("");
   const [requestLogCount, setRequestLogCount] = useState<number | null>(null);
   const [maxRequestLogs, setMaxRequestLogs] = useState<number>(100000);
-  const [customRequestLogsInput, setCustomRequestLogsInput] = useState<string>("");
   const [maxRequestBodyMB, setMaxRequestBodyMB] = useState<number>(10);
-  const [customRequestBodyInput, setCustomRequestBodyInput] = useState<string>("");
   const [logLoading, setLogLoading] = useState(true);
   const [allowedIpsText, setAllowedIpsText] = useState("");
   const [ipSaving, setIpSaving] = useState(false);
@@ -255,6 +342,11 @@ export default function SecuritySettings({
       setIpSaving(false);
     }
   };
+
+  const limitsBusy = logActionLoading || logLoading;
+  const logUsagePct = logStatus
+    ? Math.min(100, Math.round((logStatus.totalSize / (Math.max(selectedMaxSize, 1) * 1024 * 1024)) * 100))
+    : 0;
 
   const formatSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`;
@@ -560,195 +652,70 @@ export default function SecuritySettings({
             </div>
           </div>
 
-          {/* Log Rotation & Size Limit Card */}
+          {/* Storage & Limits */}
           <div className="bg-white border border-neutral-200 rounded-2xl p-6 shadow-xs space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-2.5">
-                <HardDrive className="w-5 h-5 text-neutral-800" />
-                <h3 className="font-display font-semibold text-neutral-800 text-base">Log File Size Limit</h3>
+            <div className="flex items-center space-x-2.5">
+              <HardDrive className="w-5 h-5 text-neutral-800" />
+              <div>
+                <h3 className="font-display font-semibold text-neutral-800 text-base">Storage & Limits</h3>
+                <p className="text-[11px] text-neutral-500 mt-0.5">Log rotation, retention, and request caps.</p>
               </div>
             </div>
 
-            <p className="text-xs text-neutral-600 leading-relaxed">
-              Configures the maximum size of the system log database (system_logs.db). When the limit is reached, the oldest log bucket is dropped automatically to prevent unlimited disk growth.
-            </p>
-
-            <div className="p-3.5 bg-neutral-50 border border-neutral-200 rounded-xl text-xs flex items-center justify-between min-h-[52px]">
-              <div className="text-neutral-600 font-medium">
-                <span>Current Disk Log Storage Usage:</span>
+            <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-medium text-neutral-600">System log database usage</span>
+                <span className="font-mono text-neutral-800">
+                  {logStatus ? formatSize(logStatus.totalSize) : "—"}
+                  <span className="font-normal text-neutral-400"> / {selectedMaxSize} MB</span>
+                </span>
               </div>
-              {logStatus ? (
-                <div className="font-mono font-bold text-neutral-800 text-sm">
-                  {formatSize(logStatus.totalSize)} <span className="text-neutral-400 font-normal text-xs">/ {selectedMaxSize} MB Max Capacity</span>
-                </div>
-              ) : (
-                <div className="h-4 w-32 rounded bg-neutral-200 animate-pulse" />
-              )}
-            </div>
-
-            <div className="space-y-2 pt-1">
-              <label className="text-xs font-semibold text-neutral-700 block">Max Size Per File Limit:</label>
-              <div className="flex flex-wrap items-center gap-2">
-                {[1, 2, 5, 10, 20, 50, 100].map((size) => (
-                  <button
-                    key={size}
-                    type="button"
-                    onClick={() => {
-                      handleSaveLogSize(size);
-                      setCustomSizeInput("");
-                    }}
-                    disabled={logActionLoading || logLoading || selectedMaxSize === size}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                      selectedMaxSize === size
-                        ? "bg-neutral-900 text-white shadow-xs"
-                        : "bg-neutral-100 hover:bg-neutral-200 text-neutral-700 border border-neutral-200"
-                    }`}
-                  >
-                    {size} MB
-                  </button>
-                ))}
-                <div className="flex items-center space-x-1.5 ml-1">
-                  <input
-                    type="number"
-                    min="1"
-                    max="10000"
-                    placeholder="Custom MB"
-                    value={customSizeInput}
-                    onChange={(e) => setCustomSizeInput(e.target.value)}
-                    className="w-24 px-2.5 py-1.5 bg-white border border-neutral-300 rounded-xl text-xs text-neutral-800 outline-none focus:border-neutral-500 shadow-2xs font-mono"
-                  />
-                  <button
-                    type="button"
-                    disabled={!customSizeInput || isNaN(Number(customSizeInput)) || Number(customSizeInput) <= 0 || logActionLoading}
-                    onClick={() => {
-                      const num = Number(customSizeInput);
-                      if (num > 0) handleSaveLogSize(num);
-                    }}
-                    className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-900 text-white rounded-xl text-xs font-semibold disabled:opacity-40 transition-all cursor-pointer"
-                  >
-                    Apply
-                  </button>
-                </div>
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-neutral-200">
+                <div
+                  className={`h-full rounded-full transition-all ${logUsagePct >= 90 ? "bg-red-500" : "bg-neutral-800"}`}
+                  style={{ width: `${logUsagePct}%` }}
+                />
               </div>
             </div>
 
-            <div className="space-y-2 pt-2 border-t border-neutral-100">
-              <label className="text-xs font-semibold text-neutral-700 block">Max Proxy Request Body:</label>
-              <p className="text-[11px] text-neutral-500">Caps the JSON body size for /v1/* proxy requests (chat sessions, images, etc.). Default 10 MB.</p>
-              <div className="flex flex-wrap items-center gap-2">
-                {[1, 2, 5, 10, 20, 50, 100].map((n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    onClick={() => {
-                      handleSaveMaxRequestBodyMB(n);
-                      setCustomRequestBodyInput("");
-                    }}
-                    disabled={logActionLoading || logLoading || maxRequestBodyMB === n}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                      maxRequestBodyMB === n
-                        ? "bg-neutral-900 text-white shadow-xs"
-                        : "bg-neutral-100 hover:bg-neutral-200 text-neutral-700 border border-neutral-200"
-                    }`}
-                  >
-                    {n} MB
-                  </button>
-                ))}
-                <div className="flex items-center space-x-1.5 ml-1">
-                  <input
-                    type="number"
-                    min="1"
-                    max="10000"
-                    placeholder="Custom MB"
-                    value={customRequestBodyInput}
-                    onChange={(e) => setCustomRequestBodyInput(e.target.value)}
-                    className="w-24 px-2.5 py-1.5 bg-white border border-neutral-300 rounded-xl text-xs text-neutral-800 outline-none focus:border-neutral-500 shadow-2xs font-mono"
-                  />
-                  <button
-                    type="button"
-                    disabled={!customRequestBodyInput || isNaN(Number(customRequestBodyInput)) || Number(customRequestBodyInput) <= 0 || logActionLoading}
-                    onClick={() => {
-                      const num = Number(customRequestBodyInput);
-                      if (num > 0) handleSaveMaxRequestBodyMB(num);
-                    }}
-                    className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-900 text-white rounded-xl text-xs font-semibold disabled:opacity-40 transition-all cursor-pointer"
-                  >
-                    Apply
-                  </button>
-                </div>
-              </div>
+            <div className="divide-y divide-neutral-100">
+              <LimitRow title="System log size limit" hint="Oldest log bucket is dropped once system_logs.db reaches this size.">
+                <LimitSelect value={selectedMaxSize} options={MB_OPTIONS} disabled={limitsBusy} onApply={handleSaveLogSize} />
+              </LimitRow>
+              <LimitRow title="Max proxy request body" hint="Caps JSON bodies on /v1/* (chat sessions, images, etc.).">
+                <LimitSelect value={maxRequestBodyMB} options={MB_OPTIONS} disabled={limitsBusy} onApply={handleSaveMaxRequestBodyMB} />
+              </LimitRow>
+              <LimitRow title="Request usage records" hint="Oldest request rows are pruned when this count is exceeded.">
+                <LimitSelect value={maxRequestLogs} options={RECORD_OPTIONS} disabled={limitsBusy} onApply={handleSaveMaxRequestLogs} />
+              </LimitRow>
             </div>
 
-            <div className="space-y-2 pt-2 border-t border-neutral-100">
-              <label className="text-xs font-semibold text-neutral-700 block">Max Request Usage Records:</label>
-              <p className="text-[11px] text-neutral-500">Oldest rows are pruned when the count exceeds this limit. Default 100,000.</p>
-              <div className="flex flex-wrap items-center gap-2">
-                {[10000, 50000, 100000, 200000, 500000].map((n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    onClick={() => {
-                      handleSaveMaxRequestLogs(n);
-                      setCustomRequestLogsInput("");
-                    }}
-                    disabled={logActionLoading || logLoading || maxRequestLogs === n}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                      maxRequestLogs === n
-                        ? "bg-neutral-900 text-white shadow-xs"
-                        : "bg-neutral-100 hover:bg-neutral-200 text-neutral-700 border border-neutral-200"
-                    }`}
-                  >
-                    {n.toLocaleString()}
-                  </button>
-                ))}
-                <div className="flex items-center space-x-1.5 ml-1">
-                  <input
-                    type="number"
-                    min="1"
-                    placeholder="Custom"
-                    value={customRequestLogsInput}
-                    onChange={(e) => setCustomRequestLogsInput(e.target.value)}
-                    className="w-28 px-2.5 py-1.5 bg-white border border-neutral-300 rounded-xl text-xs text-neutral-800 outline-none focus:border-neutral-500 shadow-2xs font-mono"
-                  />
-                  <button
-                    type="button"
-                    disabled={!customRequestLogsInput || isNaN(Number(customRequestLogsInput)) || Number(customRequestLogsInput) <= 0 || logActionLoading}
-                    onClick={() => {
-                      const num = Number(customRequestLogsInput);
-                      if (num > 0) handleSaveMaxRequestLogs(num);
-                    }}
-                    className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-900 text-white rounded-xl text-xs font-semibold disabled:opacity-40 transition-all cursor-pointer"
-                  >
-                    Apply
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end space-x-3 pt-2 border-t border-neutral-100 min-h-[36px]">
-              <span className="text-[11px] text-neutral-500 mr-auto min-w-[160px] inline-block">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-neutral-100 pt-3">
+              <span className="text-[11px] text-neutral-500">
                 {requestLogCount !== null
-                  ? `${requestLogCount.toLocaleString()} / ${maxRequestLogs.toLocaleString()} request usage record${requestLogCount === 1 ? "" : "s"}`
-                  : logLoading ? "…" : ""}
+                  ? `${requestLogCount.toLocaleString()} / ${maxRequestLogs.toLocaleString()} request records stored`
+                  : logLoading ? "Loading…" : ""}
               </span>
-              <button
-                type="button"
-                onClick={handleClearRequestLogs}
-                disabled={logActionLoading}
-                className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>Clear Usage Logs</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleClearLogs}
-                disabled={logActionLoading}
-                className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-all cursor-pointer"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>Clear Disk Logs</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleClearRequestLogs}
+                  disabled={logActionLoading}
+                  className="inline-flex h-8 items-center space-x-1.5 rounded-xl border border-red-200 bg-red-50 px-3 text-xs font-semibold text-red-600 transition-colors hover:bg-red-100 disabled:opacity-50"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Clear Usage Logs</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearLogs}
+                  disabled={logActionLoading}
+                  className="inline-flex h-8 items-center space-x-1.5 rounded-xl border border-red-200 bg-red-50 px-3 text-xs font-semibold text-red-600 transition-colors hover:bg-red-100 disabled:opacity-50"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Clear Disk Logs</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
