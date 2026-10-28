@@ -41,58 +41,6 @@ func TestNewValidConfig(t *testing.T) {
 	}
 }
 
-func TestNewRejectsBadLogDetail(t *testing.T) {
-	dir := writeConfig(t, `{"logDetail":"verbose"}`)
-	if _, err := New(dir); err == nil {
-		t.Fatal("expected error for invalid logDetail")
-	}
-}
-
-func TestNewRejectsBadListen(t *testing.T) {
-	dir := writeConfig(t, `{"listen":"localhost:3000"}`)
-	if _, err := New(dir); err == nil {
-		t.Fatal("expected error for listen without colon")
-	}
-}
-
-func TestNewRejectsProviderWithoutID(t *testing.T) {
-	dir := writeConfig(t, `{"providers":[{"name":"A","baseUrl":"http://a"}]}`)
-	if _, err := New(dir); err == nil {
-		t.Fatal("expected error for provider without id")
-	}
-}
-
-func TestNewRejectsDuplicateProviderID(t *testing.T) {
-	dir := writeConfig(t, `{"providers":[
-		{"id":"a","baseUrl":"http://a"},
-		{"id":"a","baseUrl":"http://b"}
-	]}`)
-	if _, err := New(dir); err == nil {
-		t.Fatal("expected error for duplicate provider id")
-	}
-}
-
-func TestNewRejectsMissingBaseURL(t *testing.T) {
-	dir := writeConfig(t, `{"providers":[{"id":"a","name":"A"}]}`)
-	if _, err := New(dir); err == nil {
-		t.Fatal("expected error for provider without baseUrl")
-	}
-}
-
-func TestNewRejectsNegativeTimeout(t *testing.T) {
-	dir := writeConfig(t, `{"providers":[{"id":"a","baseUrl":"http://a","timeout":-5}]}`)
-	if _, err := New(dir); err == nil {
-		t.Fatal("expected error for negative timeout")
-	}
-}
-
-func TestNewRejectsEmptyKey(t *testing.T) {
-	dir := writeConfig(t, `{"keys":[{"name":"nokey"}]}`)
-	if _, err := New(dir); err == nil {
-		t.Fatal("expected error for key without key value")
-	}
-}
-
 func TestNewFallsBackToDefaultsWithoutFile(t *testing.T) {
 	m, err := New(t.TempDir())
 	if err != nil {
@@ -123,20 +71,6 @@ func TestNewLoadsMaxRequestBodyMB(t *testing.T) {
 	cfg := m.Get()
 	if cfg.MaxRequestBodyMB != 25 {
 		t.Fatalf("maxRequestBodyMB = %d, want 25", cfg.MaxRequestBodyMB)
-	}
-}
-
-func TestNewRejectsNegativeMaxRequestBodyMB(t *testing.T) {
-	dir := writeConfig(t, `{"listen":":3000","maxRequestBodyMB":-1}`)
-	if _, err := New(dir); err == nil {
-		t.Fatal("expected error for negative maxRequestBodyMB")
-	}
-}
-
-func TestNewRejectsInvalidAllowedIP(t *testing.T) {
-	dir := writeConfig(t, `{"listen":":3000","allowedIps":["nope"]}`)
-	if _, err := New(dir); err == nil {
-		t.Fatal("expected error for invalid allowedIps")
 	}
 }
 
@@ -230,9 +164,69 @@ func TestNewLoadsModelMetadata(t *testing.T) {
 	}
 }
 
-func TestNewRejectsLegacyStringModelList(t *testing.T) {
-	dir := writeConfig(t, `{"listen":":3000","providers":[{"id":"p","name":"P","baseUrl":"http://p","models":["m1"]}]}`)
-	if _, err := New(dir); err == nil {
-		t.Fatal("expected error for legacy string model list")
+func TestNewMigratesLegacyStringModelList(t *testing.T) {
+	dir := writeConfig(t, `{"listen":":3000","providers":[{"id":"p","name":"P","baseUrl":"http://p",
+		"models":["gpt-4o"," gpt-4o-mini ","gpt-4o"]}]}`)
+	m, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if w := m.LoadWarning(); w != "" {
+		t.Fatalf("legacy models should load cleanly, got warning: %s", w)
+	}
+	models := m.Get().Providers[0].Models
+	if len(models) != 2 || models[0].ID != "gpt-4o" || models[1].ID != "gpt-4o-mini" {
+		t.Fatalf("models = %+v, want legacy ids migrated and deduped", models)
+	}
+}
+
+func TestNewFallsBackToDefaultsOnUnusableConfig(t *testing.T) {
+	cases := map[string]string{
+		"bad logDetail":       `{"logDetail":"verbose"}`,
+		"bad listen":          `{"listen":"localhost:3000"}`,
+		"provider without id": `{"providers":[{"name":"A","baseUrl":"http://a"}]}`,
+		"duplicate provider":  `{"providers":[{"id":"a","baseUrl":"http://a"},{"id":"a","baseUrl":"http://b"}]}`,
+		"provider no baseUrl": `{"providers":[{"id":"a","name":"A"}]}`,
+		"negative timeout":    `{"providers":[{"id":"a","baseUrl":"http://a","timeout":-5}]}`,
+		"key without value":   `{"keys":[{"name":"nokey"}]}`,
+		"negative body limit": `{"listen":":3000","maxRequestBodyMB":-1}`,
+		"invalid allowed ip":  `{"listen":":3000","allowedIps":["nope"]}`,
+		"not json":            `{ this is not json`,
+		"wrong types":         `{"providers":"nope"}`,
+	}
+	for name, content := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := writeConfig(t, content)
+
+			// Startup must succeed no matter how broken the file is.
+			m, err := New(dir)
+			if err != nil {
+				t.Fatalf("New returned error, startup would fail: %v", err)
+			}
+			if m.LoadWarning() == "" {
+				t.Fatal("expected a LoadWarning explaining the fallback")
+			}
+			cfg := m.Get()
+			if cfg.Listen != ":3000" || cfg.LogDetail != "basic" {
+				t.Fatalf("did not fall back to defaults: listen=%q logDetail=%q", cfg.Listen, cfg.LogDetail)
+			}
+
+			// The original content is preserved and a valid config is written back.
+			kept, err := filepath.Glob(filepath.Join(dir, "config.json.broken-*"))
+			if err != nil || len(kept) != 1 {
+				t.Fatalf("broken file not quarantined: %v %v", kept, err)
+			}
+			raw, _ := os.ReadFile(kept[0])
+			if string(raw) != content {
+				t.Fatalf("quarantined file changed: %q", raw)
+			}
+			reloaded, err := New(dir)
+			if err != nil {
+				t.Fatalf("reload after repair: %v", err)
+			}
+			if reloaded.LoadWarning() != "" {
+				t.Fatalf("repaired config should load cleanly: %s", reloaded.LoadWarning())
+			}
+		})
 	}
 }

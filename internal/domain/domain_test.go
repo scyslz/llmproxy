@@ -1,6 +1,9 @@
 package domain
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestSanitizeModels(t *testing.T) {
 	in := []Model{
@@ -50,5 +53,40 @@ func TestProviderModelHelpers(t *testing.T) {
 	empty := Provider{}
 	if empty.DefaultModelID() != "" {
 		t.Fatal("empty provider should have empty default model")
+	}
+}
+
+func TestModelUnmarshalJSON(t *testing.T) {
+	var m Model
+	if err := json.Unmarshal([]byte(`"gpt-4o"`), &m); err != nil {
+		t.Fatalf("legacy string: %v", err)
+	}
+	if m.ID != "gpt-4o" || m.ContextLength != 0 || m.Protocol != "" {
+		t.Fatalf("legacy string decoded to %+v", m)
+	}
+
+	var obj Model
+	if err := json.Unmarshal([]byte(`{"id":"m","contextLength":1000,"maxOutputTokens":100,"protocol":"responses"}`), &obj); err != nil {
+		t.Fatalf("object: %v", err)
+	}
+	if obj.ID != "m" || obj.ContextLength != 1000 || obj.MaxOutputTokens != 100 || obj.Protocol != "responses" {
+		t.Fatalf("object decoded to %+v", obj)
+	}
+
+	var nul Model
+	if err := json.Unmarshal([]byte(`null`), &nul); err != nil {
+		t.Fatalf("null: %v", err)
+	}
+	if nul != (Model{}) {
+		t.Fatalf("null decoded to %+v", nul)
+	}
+
+	// Mixed lists (legacy and object entries together) decode fine.
+	var list []Model
+	if err := json.Unmarshal([]byte(`["a",{"id":"b","contextLength":5}]`), &list); err != nil {
+		t.Fatalf("mixed list: %v", err)
+	}
+	if len(list) != 2 || list[0].ID != "a" || list[1].ContextLength != 5 {
+		t.Fatalf("mixed list decoded to %+v", list)
 	}
 }

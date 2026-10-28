@@ -93,6 +93,12 @@ Docker Compose uses image `scyslz/llmproxy` without local build. Inside the cont
 }
 ```
 
+### Startup Robustness
+
+The proxy always starts: a missing, unreadable, malformed or invalid `config.json` no longer aborts startup. Instead the file is preserved as `config.json.broken-<timestamp>`, the built-in defaults are used, a `[Warn]` line explains why, and a clean `config.json` is written so the next start is normal.
+
+Legacy configs keep working: a model list written as bare ids is upgraded in memory to model objects, and a leftover `keyPrefix` (or other retired field) is ignored. The refreshed shape is written back on the next dashboard save.
+
 ### Top-Level Fields
 
 | Field | Type | Description |

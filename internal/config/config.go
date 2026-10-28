@@ -2,11 +2,13 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"llmproxy/internal/auth"
 	"llmproxy/internal/domain"
@@ -18,35 +20,92 @@ type Manager struct {
 	mu             sync.RWMutex
 	cfg            *domain.Config
 	configFilePath string
+	loadWarning    string
 }
+
+// LoadWarning reports a startup problem that forced a fallback to defaults.
+// Empty means the config file was loaded as-is.
+func (m *Manager) LoadWarning() string { return m.loadWarning }
 
 // ConfigFile returns the path of the config file in use.
 func (m *Manager) ConfigFile() string { return m.configFilePath }
 
 // New loads the configuration from config/config.json relative to cwd, applying
-// defaults and environment injection. A missing/corrupt file falls back to defaults.
+// defaults and environment injection.
+//
+// Startup never fails because of file content: a missing, unreadable, malformed
+// or invalid config falls back to the built-in defaults, keeps the original file
+// as config.json.broken-<timestamp>, and records the reason in LoadWarning so the
+// caller can surface it. Only I/O problems that prevent writing the config
+// directory are returned as errors.
 func New(configDir string) (*Manager, error) {
 	path := filepath.Join(configDir, "config.json")
 	cfg := defaultConfig()
+	warning := ""
+
 	if data, err := os.ReadFile(path); err == nil {
-		parsed := &rawConfig{}
-		var mapData map[string]json.RawMessage
-		if err := json.Unmarshal(data, &mapData); err == nil {
-			if err := json.Unmarshal(data, parsed); err != nil {
-				return nil, err
+		loaded, loadErr := decodeConfig(data, cfg)
+		if loadErr == nil {
+			loaded = normalize(loaded)
+			loadErr = validate(loaded)
+			if loadErr == nil {
+				cfg = loaded
 			}
-			cfg = mergeConfig(cfg, parsed, mapData)
 		}
+		if loadErr != nil {
+			kept := quarantine(path)
+			warning = fmt.Sprintf("config %s could not be used (%v); started with defaults", path, loadErr)
+			if kept != "" {
+				warning += ", original kept as " + kept
+			}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		warning = fmt.Sprintf("config %s is unreadable (%v); started with defaults", path, err)
 	}
+
 	injectEnv(cfg)
 	cfg = normalize(cfg)
 	if err := validate(cfg); err != nil {
-		return nil, err
+		// Defaults are compiled in; failing here is a programming error.
+		return nil, fmt.Errorf("config: built-in defaults are invalid: %w", err)
 	}
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		return nil, err
 	}
-	return &Manager{cfg: cfg, configFilePath: path}, nil
+	m := &Manager{cfg: cfg, configFilePath: path, loadWarning: warning}
+	if warning != "" {
+		// Persist what is actually running so the next start is clean.
+		if err := writeFileSync(path, cfg); err != nil {
+			m.loadWarning += fmt.Sprintf(" (and writing defaults failed: %v)", err)
+		}
+	}
+	return m, nil
+}
+
+// decodeConfig parses data over base and returns the merged configuration.
+func decodeConfig(data []byte, base *domain.Config) (*domain.Config, error) {
+	var mapData map[string]json.RawMessage
+	if err := json.Unmarshal(data, &mapData); err != nil {
+		return nil, err
+	}
+	parsed := &rawConfig{}
+	if err := json.Unmarshal(data, parsed); err != nil {
+		return nil, err
+	}
+	return mergeConfig(base, parsed, mapData), nil
+}
+
+// quarantine moves an unusable config aside, preserving its content for the
+// operator, and returns the new path (empty when it could not be kept).
+func quarantine(path string) string {
+	if _, err := os.Stat(path); err != nil {
+		return ""
+	}
+	target := fmt.Sprintf("%s.broken-%s", path, time.Now().UTC().Format("20060102-150405"))
+	if err := os.Rename(path, target); err != nil {
+		return ""
+	}
+	return target
 }
 
 // Get returns a deep copy of the current configuration.

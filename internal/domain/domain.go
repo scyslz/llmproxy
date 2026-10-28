@@ -1,6 +1,10 @@
 package domain
 
-import "strings"
+import (
+	"bytes"
+	"encoding/json"
+	"strings"
+)
 
 // Model is one model a provider serves, together with the metadata the proxy
 // needs for it: context window, max output tokens, and the upstream protocol it
@@ -10,6 +14,32 @@ type Model struct {
 	ContextLength   int    `json:"contextLength,omitempty"`
 	MaxOutputTokens int    `json:"maxOutputTokens,omitempty"`
 	Protocol        string `json:"protocol,omitempty"`
+}
+
+// UnmarshalJSON accepts both the object form and the legacy bare-id form
+// ("gpt-4o"), which older configs and API clients still use. A bare id becomes
+// a Model with no limits and no pinned protocol.
+func (m *Model) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		*m = Model{}
+		return nil
+	}
+	if trimmed[0] == '"' {
+		var id string
+		if err := json.Unmarshal(trimmed, &id); err != nil {
+			return err
+		}
+		*m = Model{ID: id}
+		return nil
+	}
+	type plain Model // avoid recursing into this method
+	var aux plain
+	if err := json.Unmarshal(trimmed, &aux); err != nil {
+		return err
+	}
+	*m = Model(aux)
+	return nil
 }
 
 // Models builds a model list from bare ids. It keeps test fixtures and defaults

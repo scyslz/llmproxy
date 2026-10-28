@@ -29,6 +29,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
+	if w := cfg.LoadWarning(); w != "" {
+		log.Printf("[Warn] %s", w)
+	}
 
 	// SQLite 日志存储
 	sysStore, err := logstore.OpenSystem(filepath.Join(logsDir, "system_logs.db"))
