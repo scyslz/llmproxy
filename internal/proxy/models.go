@@ -37,15 +37,15 @@ func (a *App) HandleModels(w http.ResponseWriter, r *http.Request) {
 	seen := map[string]bool{}
 	for _, p := range cands {
 		for _, m := range p.Models {
-			if !seen[m] {
-				seen[m] = true
-				models = append(models, m)
+			if !seen[m.ID] {
+				seen[m.ID] = true
+				models = append(models, m.ID)
 			}
-			if n := p.ModelContextLengths[m]; n > 0 && ctxLens[m] == 0 {
-				ctxLens[m] = n
+			if m.ContextLength > 0 && ctxLens[m.ID] == 0 {
+				ctxLens[m.ID] = m.ContextLength
 			}
-			if n := p.ModelMaxOutputs[m]; n > 0 && maxOuts[m] == 0 {
-				maxOuts[m] = n
+			if m.MaxOutputTokens > 0 && maxOuts[m.ID] == 0 {
+				maxOuts[m.ID] = m.MaxOutputTokens
 			}
 		}
 	}
@@ -72,17 +72,13 @@ func (a *App) HandleModels(w http.ResponseWriter, r *http.Request) {
 // 若该 provider 未配置限制，继续向后寻找，避免客户端拿到空限制。
 func autoModelLimits(cands []*Provider) (int, int) {
 	for _, p := range cands {
-		target := p.DefaultModel
-		if target == "" && len(p.Models) > 0 {
-			target = p.Models[0]
-		}
+		target := p.DefaultModelID()
 		if target == "" {
 			continue
 		}
-		ctxLen := p.ModelContextLengths[target]
-		outLen := p.ModelMaxOutputs[target]
-		if ctxLen > 0 || outLen > 0 {
-			return ctxLen, outLen
+		m := p.ModelByID(target)
+		if m != nil && (m.ContextLength > 0 || m.MaxOutputTokens > 0) {
+			return m.ContextLength, m.MaxOutputTokens
 		}
 	}
 	return 0, 0
@@ -553,31 +549,20 @@ fetch:
 		writeJSON(w, 500, map[string]string{"error": "Failed to parse upstream response: " + err.Error()})
 		return
 	}
-	models := make([]string, 0, len(infos))
-	contextLengths := map[string]int{}
-	maxOutputs := map[string]int{}
+	models := make([]domain.Model, 0, len(infos))
 	for _, info := range infos {
-		models = append(models, info.ID)
-		if info.ContextLength > 0 {
-			contextLengths[info.ID] = info.ContextLength
-		}
-		if info.MaxOutput > 0 {
-			maxOutputs[info.ID] = info.MaxOutput
-		}
+		models = append(models, domain.Model{
+			ID:              info.ID,
+			ContextLength:   info.ContextLength,
+			MaxOutputTokens: info.MaxOutput,
+		})
 	}
 	a.Logger.Log(logging.LevelInfo, "Successfully fetched "+itoa(len(models))+" models from "+targetURL, "proxy", reqID)
-	out := map[string]interface{}{
+	writeJSON(w, 200, map[string]interface{}{
 		"models": models,
 		"count":  len(models),
 		"url":    targetURL,
-	}
-	if len(contextLengths) > 0 {
-		out["contextLengths"] = contextLengths
-	}
-	if len(maxOutputs) > 0 {
-		out["maxOutputs"] = maxOutputs
-	}
-	writeJSON(w, 200, out)
+	})
 }
 
 type remoteModelInfo struct {
@@ -988,8 +973,8 @@ func (a *App) resolveLLMProvider(req *llmLookup) *llmLookup {
 		m := p.DefaultModel
 		if model != "" {
 			m = model
-		} else if m == "" && len(p.Models) > 0 {
-			m = p.Models[0]
+		} else if m == "" {
+			m = p.DefaultModelID()
 		}
 		if m == "" {
 			return nil

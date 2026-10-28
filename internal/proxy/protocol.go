@@ -45,10 +45,8 @@ func inboundProtocol(path string) string {
 
 // upstreamProtocol 解析 provider 对指定模型期望的协议；known=false 表示未知（需探测）。
 func (p *Provider) upstreamProtocol(model string) (proto string, known bool) {
-	if p.ModelProtocols != nil {
-		if mp, ok := p.ModelProtocols[model]; ok && mp != "" {
-			return mp, true
-		}
+	if m := p.ModelByID(model); m != nil && m.Protocol != "" {
+		return m.Protocol, true
 	}
 	if p.Protocol != "" {
 		return p.Protocol, true
@@ -380,10 +378,9 @@ func (a *App) persistDiscoveredProtocol(providerID, model, proto string) {
 	_ = a.Cfg.Update(func(c *domain.Config) {
 		for i := range c.Providers {
 			if c.Providers[i].ID == providerID {
-				if c.Providers[i].ModelProtocols == nil {
-					c.Providers[i].ModelProtocols = map[string]string{}
+				if m := c.Providers[i].ModelByID(model); m != nil {
+					m.Protocol = proto
 				}
-				c.Providers[i].ModelProtocols[model] = proto
 				return
 			}
 		}

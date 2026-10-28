@@ -9,9 +9,6 @@
   "maxRequestLogs": 100000,
   "activeLogFile": 1,
   "maxRequestBodyMB": 10,
-  "trustProxy": true,
-  "proxyFlagHeader": "xsss1212",
-  "proxyFlagValue": "55551212",
   "providers": [
     {
       "id": "mock",
@@ -20,8 +17,12 @@
       "apiKey": "upstream-key",
       "enabled": true,
       "models": [
-        "mock-model",
-        "1234"
+        {
+          "id": "mock-model"
+        },
+        {
+          "id": "1234"
+        }
       ],
       "chatEndpoint": "/chat/completions",
       "defaultModel": "1234"
@@ -33,7 +34,9 @@
       "apiKey": "bad-key",
       "enabled": true,
       "models": [
-        "1234"
+        {
+          "id": "1234"
+        }
       ],
       "chatEndpoint": "/chat/completions",
       "defaultModel": "1234"

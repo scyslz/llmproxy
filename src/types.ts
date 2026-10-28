@@ -1,20 +1,26 @@
+// Model is one model a provider serves plus its own metadata. Limits are
+// optional (unknown until fetched or looked up); protocol is empty until the
+// proxy probes or the user pins it.
+export interface Model {
+  id: string;
+  contextLength?: number;
+  maxOutputTokens?: number;
+  protocol?: "chat" | "responses";
+}
+
 export interface Provider {
   id: string;
   name: string;
   baseUrl: string;
   apiKey: string;
   enabled: boolean;
-  models: string[];
+  models: Model[];
   concurrency?: number;
   chatEndpoint?: string;
   responsesEndpoint?: string;
   defaultModel?: string;
-  // protocol 声明该 provider 接受的对话协议；空字符串表示由代理自动探测。
+  // protocol is the provider-wide default; Model.protocol overrides it.
   protocol?: "chat" | "responses";
-  // modelProtocols 按 (model) 覆盖 protocol，由 404 探测成功后自动写入。
-  modelProtocols?: Record<string, string>;
-  modelContextLengths?: Record<string, number>;
-  modelMaxOutputs?: Record<string, number>;
 }
 
 export interface VirtualKey {

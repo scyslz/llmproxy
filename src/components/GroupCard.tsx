@@ -220,7 +220,7 @@ export default function GroupCard({
                   >
                     <option value="">{newPid ? "all models" : "select provider first"}</option>
                     {newPid && (providers.find(p => p.id === newPid)?.models || []).map(m => (
-                      <option key={m} value={m}>{m}</option>
+                      <option key={m.id} value={m.id}>{m.id}</option>
                     ))}
                   </select>
                   <button type="button" onClick={addFlatItem}

@@ -36,7 +36,7 @@ func TestProxyForwardsUserAgentOnConvertPath(t *testing.T) {
 		EnableVirtualKey: true,
 		LogDetail:        "basic",
 		Providers: []domain.Provider{
-			{ID: "up", Name: "Up P", BaseURL: srv.URL, APIKey: "k", Enabled: true, Models: []string{"m"}, DefaultModel: "m", Timeout: 5000},
+			{ID: "up", Name: "Up P", BaseURL: srv.URL, APIKey: "k", Enabled: true, Models: domain.Models("m"), DefaultModel: "m", Timeout: 5000},
 		},
 		Keys: []domain.VirtualKey{{Key: "sk-ua", Name: "UA Key", ProviderIDs: []string{"up"}}},
 	}

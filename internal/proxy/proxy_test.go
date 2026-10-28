@@ -135,11 +135,11 @@ func TestFetchRemoteModelsOpenRouterLike(t *testing.T) {
 	if !strings.Contains(body, `"stealth/union-alpha"`) || !strings.Contains(body, `"openai/gpt-4o"`) {
 		t.Fatalf("unexpected body: %s", body)
 	}
-	if !strings.Contains(body, `"contextLengths"`) || !strings.Contains(body, "262144") {
-		t.Fatalf("missing contextLengths: %s", body)
+	if !strings.Contains(body, `"contextLength":262144`) || !strings.Contains(body, `"maxOutputTokens":32768`) {
+		t.Fatalf("model limits missing from models entries: %s", body)
 	}
-	if !strings.Contains(body, `"maxOutputs"`) || !strings.Contains(body, "32768") || !strings.Contains(body, "16384") {
-		t.Fatalf("missing maxOutputs: %s", body)
+	if !strings.Contains(body, `"contextLength":128000`) || !strings.Contains(body, `"maxOutputTokens":16384`) {
+		t.Fatalf("limit object was not mapped to model metadata: %s", body)
 	}
 }
 
@@ -152,7 +152,12 @@ func TestHandleModelsIncludesContextLength(t *testing.T) {
 	cfg := testConfig()
 	cfg.EnableVirtualKey = false
 	cfg.Providers = []domain.Provider{
-		{ID: "or", Name: "OR", BaseURL: "http://example", Enabled: true, Models: []string{"openai/gpt-4o", "plain", "ctxonly", "outonly"}, ModelContextLengths: map[string]int{"openai/gpt-4o": 128000, "ctxonly": 100000}, ModelMaxOutputs: map[string]int{"openai/gpt-4o": 16384, "outonly": 8192}},
+		{ID: "or", Name: "OR", BaseURL: "http://example", Enabled: true, Models: []domain.Model{
+			{ID: "openai/gpt-4o", ContextLength: 128000, MaxOutputTokens: 16384},
+			{ID: "plain"},
+			{ID: "ctxonly", ContextLength: 100000},
+			{ID: "outonly", MaxOutputTokens: 8192},
+		}},
 	}
 	if err := cm.Replace(cfg); err != nil {
 		t.Fatal(err)
@@ -216,10 +221,11 @@ func TestHandleModelsAutoUsesDefaultModelLimits(t *testing.T) {
 	cfg.Providers = []domain.Provider{
 		{
 			ID: "p1", Name: "P1", BaseURL: "http://example", Enabled: true,
-			Models:              []string{"first", "preferred"},
-			DefaultModel:        "preferred",
-			ModelContextLengths: map[string]int{"first": 100000, "preferred": 200000},
-			ModelMaxOutputs:     map[string]int{"first": 8000, "preferred": 16000},
+			Models: []domain.Model{
+				{ID: "first", ContextLength: 100000, MaxOutputTokens: 8000},
+				{ID: "preferred", ContextLength: 200000, MaxOutputTokens: 16000},
+			},
+			DefaultModel: "preferred",
 		},
 	}
 	if err := cm.Replace(cfg); err != nil {
@@ -469,8 +475,8 @@ func TestGroup_DegradeWithLazyHealth(t *testing.T) {
 		EnableVirtualKey: true,
 		LogDetail:        "basic",
 		Providers: []domain.Provider{
-			{ID: "fail", Name: "Fail P", BaseURL: failSrv.URL, APIKey: "k", Enabled: true, Models: []string{"m"}, DefaultModel: "m", Timeout: 2000},
-			{ID: "ok", Name: "Ok P", BaseURL: okSrv.URL, APIKey: "k", Enabled: true, Models: []string{"m"}, DefaultModel: "m", Timeout: 2000},
+			{ID: "fail", Name: "Fail P", BaseURL: failSrv.URL, APIKey: "k", Enabled: true, Models: domain.Models("m"), DefaultModel: "m", Timeout: 2000},
+			{ID: "ok", Name: "Ok P", BaseURL: okSrv.URL, APIKey: "k", Enabled: true, Models: domain.Models("m"), DefaultModel: "m", Timeout: 2000},
 		},
 		Groups: []domain.ProviderGroup{
 			{ID: "g", Name: "G", Entries: []domain.GroupEntry{{ProviderID: "fail"}, {ProviderID: "ok"}}},

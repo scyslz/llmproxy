@@ -109,9 +109,9 @@ func defaultConfig() *domain.Config {
 		MaxRequestBodyMB: 10,
 		AllowedIPs:       []string{},
 		Providers: []domain.Provider{
-			{ID: "gemini", Name: "Google Gemini", BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai", APIKey: os.Getenv("GEMINI_API_KEY"), Enabled: true, Models: []string{"gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash"}, Timeout: 120000},
-			{ID: "openai", Name: "OpenAI", BaseURL: "https://api.openai.com", Enabled: false, Models: []string{"gpt-4o", "gpt-4o-mini", "o1-mini"}, Timeout: 120000},
-			{ID: "deepseek", Name: "DeepSeek", BaseURL: "https://api.deepseek.com", Enabled: false, Models: []string{"deepseek-chat", "deepseek-reasoner"}, Timeout: 120000},
+			{ID: "gemini", Name: "Google Gemini", BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai", APIKey: os.Getenv("GEMINI_API_KEY"), Enabled: true, Models: domain.Models("gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash"), Timeout: 120000},
+			{ID: "openai", Name: "OpenAI", BaseURL: "https://api.openai.com", Enabled: false, Models: domain.Models("gpt-4o", "gpt-4o-mini", "o1-mini"), Timeout: 120000},
+			{ID: "deepseek", Name: "DeepSeek", BaseURL: "https://api.deepseek.com", Enabled: false, Models: domain.Models("deepseek-chat", "deepseek-reasoner"), Timeout: 120000},
 		},
 		Keys: []domain.VirtualKey{
 			{Key: "sk-proxy-demo-key", Name: "Demo Virtual Key", ProviderIDs: []string{"gemini", "openai", "deepseek"}},
@@ -138,20 +138,18 @@ type rawConfig struct {
 }
 
 type rawProvider struct {
-	ID                  string         `json:"id"`
-	Name                string         `json:"name"`
-	BaseURL             string         `json:"baseUrl"`
-	APIKey              string         `json:"apiKey"`
-	Enabled             *bool          `json:"enabled"`
-	Models              []string       `json:"models"`
-	Concurrency         *int           `json:"concurrency"`
-	Timeout             *int           `json:"timeout"`
-	OpenAIEndpoint      string         `json:"openaiEndpoint"` // legacy alias, migrated to ChatEndpoint
-	ChatEndpoint        string         `json:"chatEndpoint"`
-	ResponsesEndpoint   string         `json:"responsesEndpoint"`
-	DefaultModel        string         `json:"defaultModel"`
-	ModelContextLengths map[string]int `json:"modelContextLengths,omitempty"`
-	ModelMaxOutputs     map[string]int `json:"modelMaxOutputs,omitempty"`
+	ID                string         `json:"id"`
+	Name              string         `json:"name"`
+	BaseURL           string         `json:"baseUrl"`
+	APIKey            string         `json:"apiKey"`
+	Enabled           *bool          `json:"enabled"`
+	Models            []domain.Model `json:"models"`
+	Concurrency       *int           `json:"concurrency"`
+	Timeout           *int           `json:"timeout"`
+	OpenAIEndpoint    string         `json:"openaiEndpoint"` // legacy alias, migrated to ChatEndpoint
+	ChatEndpoint      string         `json:"chatEndpoint"`
+	ResponsesEndpoint string         `json:"responsesEndpoint"`
+	DefaultModel      string         `json:"defaultModel"`
 	// Legacy/alternate field names kept for compatibility.
 	BaseUrl2 string `json:"base_url"`
 	APIKey2  string `json:"api_key"`
@@ -248,16 +246,14 @@ func mergeConfig(base *domain.Config, raw *rawConfig, m map[string]json.RawMessa
 
 func (rp rawProvider) toProvider() domain.Provider {
 	p := domain.Provider{
-		ID:                  rp.ID,
-		Name:                rp.Name,
-		BaseURL:             orString(rp.BaseURL, rp.BaseUrl2),
-		APIKey:              orString(rp.APIKey, rp.APIKey2),
-		Models:              rp.Models,
-		ChatEndpoint:        orString(rp.ChatEndpoint, orString(rp.OpenAIEndpoint, rp.OpenA2)),
-		ResponsesEndpoint:   rp.ResponsesEndpoint,
-		DefaultModel:        orString(rp.DefaultModel, rp.Default2),
-		ModelContextLengths: rp.ModelContextLengths,
-		ModelMaxOutputs:     rp.ModelMaxOutputs,
+		ID:                rp.ID,
+		Name:              rp.Name,
+		BaseURL:           orString(rp.BaseURL, rp.BaseUrl2),
+		APIKey:            orString(rp.APIKey, rp.APIKey2),
+		ChatEndpoint:      orString(rp.ChatEndpoint, orString(rp.OpenAIEndpoint, rp.OpenA2)),
+		ResponsesEndpoint: rp.ResponsesEndpoint,
+		DefaultModel:      orString(rp.DefaultModel, rp.Default2),
+		Models:            domain.SanitizeModels(rp.Models),
 	}
 	if rp.Enabled != nil {
 		p.Enabled = *rp.Enabled
@@ -293,6 +289,9 @@ func normalize(cfg *domain.Config) *domain.Config {
 	}
 	if cfg.Providers == nil {
 		cfg.Providers = []domain.Provider{}
+	}
+	for i := range cfg.Providers {
+		cfg.Providers[i].Models = domain.SanitizeModels(cfg.Providers[i].Models)
 	}
 	if cfg.Groups == nil {
 		cfg.Groups = []domain.ProviderGroup{}
@@ -343,6 +342,14 @@ func validate(cfg *domain.Config) error {
 		}
 		if p.Concurrency < 0 {
 			return fmt.Errorf("config: provider %q concurrency must be >= 0, got %d", p.ID, p.Concurrency)
+		}
+		for _, m := range p.Models {
+			if m.ID == "" {
+				return fmt.Errorf("config: provider %q has a model without id", p.ID)
+			}
+			if m.ContextLength < 0 || m.MaxOutputTokens < 0 {
+				return fmt.Errorf("config: provider %q model %q has negative limits", p.ID, m.ID)
+			}
 		}
 	}
 	seenGroups := map[string]bool{}

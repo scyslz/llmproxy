@@ -46,7 +46,7 @@ func singleProviderConfig(srv *httptest.Server) *domain.Config {
 		LogDetail:        "basic",
 		Providers: []domain.Provider{
 			{ID: "p1", Name: "P1", BaseURL: srv.URL, APIKey: "k", Enabled: true,
-				Models: []string{"m"}, DefaultModel: "m", Timeout: 2000},
+				Models: domain.Models("m"), DefaultModel: "m", Timeout: 2000},
 		},
 		Keys: []domain.VirtualKey{
 			{Key: "sk-test", Name: "Test Key", ProviderIDs: []string{"p1"}},

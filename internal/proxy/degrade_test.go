@@ -39,8 +39,8 @@ func TestHandleProxyDegradeLogs(t *testing.T) {
 		EnableVirtualKey: true,
 		LogDetail:        "basic",
 		Providers: []domain.Provider{
-			{ID: "fail", Name: "Fail P", BaseURL: failSrv.URL, APIKey: "k", Enabled: true, Models: []string{"m"}, DefaultModel: "m", Timeout: 2000},
-			{ID: "ok", Name: "Ok P", BaseURL: okSrv.URL, APIKey: "k", Enabled: true, Models: []string{"m"}, DefaultModel: "m", Timeout: 2000},
+			{ID: "fail", Name: "Fail P", BaseURL: failSrv.URL, APIKey: "k", Enabled: true, Models: domain.Models("m"), DefaultModel: "m", Timeout: 2000},
+			{ID: "ok", Name: "Ok P", BaseURL: okSrv.URL, APIKey: "k", Enabled: true, Models: domain.Models("m"), DefaultModel: "m", Timeout: 2000},
 		},
 		Keys: []domain.VirtualKey{
 			{Key: "sk-degrade", Name: "Degrade Key", ProviderIDs: []string{"fail", "ok"}},
@@ -159,7 +159,7 @@ func TestHandleProxySingleProviderNoExtraLog(t *testing.T) {
 		EnableVirtualKey: true,
 		LogDetail:        "basic",
 		Providers: []domain.Provider{
-			{ID: "solo", Name: "Solo P", BaseURL: failSrv.URL, APIKey: "k", Enabled: true, Models: []string{"m"}, DefaultModel: "m", Timeout: 2000},
+			{ID: "solo", Name: "Solo P", BaseURL: failSrv.URL, APIKey: "k", Enabled: true, Models: domain.Models("m"), DefaultModel: "m", Timeout: 2000},
 		},
 		Keys: []domain.VirtualKey{
 			{Key: "sk-solo", Name: "Solo Key", ProviderIDs: []string{"solo"}},
@@ -253,8 +253,8 @@ func TestHandleProxyPerProviderModel(t *testing.T) {
 		EnableVirtualKey: true,
 		LogDetail:        "basic",
 		Providers: []domain.Provider{
-			{ID: "p1", Name: "P1", BaseURL: p1.URL, APIKey: "k", Enabled: true, Models: []string{"other-model"}, DefaultModel: "p1-fallback", Timeout: 2000},
-			{ID: "p2", Name: "P2", BaseURL: p2.URL, APIKey: "k", Enabled: true, Models: []string{"target-model"}, DefaultModel: "p2-default", Timeout: 2000},
+			{ID: "p1", Name: "P1", BaseURL: p1.URL, APIKey: "k", Enabled: true, Models: domain.Models("other-model"), DefaultModel: "p1-fallback", Timeout: 2000},
+			{ID: "p2", Name: "P2", BaseURL: p2.URL, APIKey: "k", Enabled: true, Models: domain.Models("target-model"), DefaultModel: "p2-default", Timeout: 2000},
 		},
 		Keys: []domain.VirtualKey{
 			{Key: "sk-multi", Name: "Multi Key", ProviderIDs: []string{"p1", "p2"}},
@@ -336,7 +336,7 @@ func TestHandleProxyRejectsOversizedBody(t *testing.T) {
 		LogDetail:        "off",
 		MaxRequestBodyMB: 1,
 		Providers: []domain.Provider{
-			{ID: "p", Name: "P", BaseURL: "http://127.0.0.1:1", APIKey: "k", Enabled: true, Models: []string{"m"}, DefaultModel: "m"},
+			{ID: "p", Name: "P", BaseURL: "http://127.0.0.1:1", APIKey: "k", Enabled: true, Models: domain.Models("m"), DefaultModel: "m"},
 		},
 	}
 	if err := cm.Replace(cfg); err != nil {

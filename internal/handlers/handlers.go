@@ -106,8 +106,11 @@ func (m *Manager) HandleCreateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.Enabled = false
-	// 新建时清空已探测的 model 协议，等待重新探测
-	p.ModelProtocols = nil
+	p.Models = domain.SanitizeModels(p.Models)
+	// 新建时清空已探测的模型协议，等待重新探测
+	for i := range p.Models {
+		p.Models[i].Protocol = ""
+	}
 	if err := m.Cfg.Update(func(c *domain.Config) {
 		c.Providers = append(c.Providers, p)
 	}); err != nil {
@@ -140,8 +143,10 @@ func (m *Manager) HandleUpdateProvider(w http.ResponseWriter, r *http.Request, i
 			if c.Providers[i].ID == id {
 				applyPatch(&c.Providers[i], body)
 				c.Providers[i].ID = id // prevent id change
-				// 保存时清空已确定的 model 协议，等待重新探测（用户要求：save provider清空确定好的 model 协议）
-				c.Providers[i].ModelProtocols = nil
+				// 保存时清空已探测的模型协议，等待重新探测
+				for j := range c.Providers[i].Models {
+					c.Providers[i].Models[j].Protocol = ""
+				}
 				break
 			}
 		}
@@ -158,6 +163,33 @@ func (m *Manager) HandleUpdateProvider(w http.ResponseWriter, r *http.Request, i
 		}
 	}
 	writeJSON(w, 404, map[string]string{"error": "Provider not found"})
+}
+
+// parseModels converts a JSON "models" array into provider model entries.
+// Unknown fields are ignored; ids are trimmed and deduped by SanitizeModels.
+func parseModels(arr []interface{}) []domain.Model {
+	out := make([]domain.Model, 0, len(arr))
+	for _, item := range arr {
+		obj, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		var m domain.Model
+		if s, ok := obj["id"].(string); ok {
+			m.ID = s
+		}
+		if n, ok := obj["contextLength"].(float64); ok {
+			m.ContextLength = int(n)
+		}
+		if n, ok := obj["maxOutputTokens"].(float64); ok {
+			m.MaxOutputTokens = int(n)
+		}
+		if s, ok := obj["protocol"].(string); ok {
+			m.Protocol = s
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
 func (m *Manager) HandleDeleteProvider(w http.ResponseWriter, _ *http.Request, id string) {
@@ -609,63 +641,9 @@ func applyPatch(p *domain.Provider, body map[string]interface{}) {
 	if v, ok := body["defaultModel"].(string); ok {
 		p.DefaultModel = v
 	}
-	modelsPatched := false
 	if v, ok := body["models"]; ok {
 		if arr, ok := v.([]interface{}); ok {
-			models := make([]string, len(arr))
-			for i, x := range arr {
-				models[i], _ = x.(string)
-			}
-			p.Models = models
-			modelsPatched = true
-		}
-	}
-	if v, ok := body["modelContextLengths"]; ok {
-		if mp, ok := v.(map[string]interface{}); ok {
-			out := make(map[string]int, len(mp))
-			for k, val := range mp {
-				switch n := val.(type) {
-				case float64:
-					if n > 0 {
-						out[k] = int(n)
-					}
-				}
-			}
-			p.ModelContextLengths = out
-		}
-	}
-	if v, ok := body["modelMaxOutputs"]; ok {
-		if mp, ok := v.(map[string]interface{}); ok {
-			out := make(map[string]int, len(mp))
-			for k, val := range mp {
-				switch n := val.(type) {
-				case float64:
-					if n > 0 {
-						out[k] = int(n)
-					}
-				}
-			}
-			p.ModelMaxOutputs = out
-		}
-	}
-	if modelsPatched {
-		if len(p.ModelContextLengths) > 0 {
-			keep := make(map[string]int, len(p.Models))
-			for _, m := range p.Models {
-				if n := p.ModelContextLengths[m]; n > 0 {
-					keep[m] = n
-				}
-			}
-			p.ModelContextLengths = keep
-		}
-		if len(p.ModelMaxOutputs) > 0 {
-			keep := make(map[string]int, len(p.Models))
-			for _, m := range p.Models {
-				if n := p.ModelMaxOutputs[m]; n > 0 {
-					keep[m] = n
-				}
-			}
-			p.ModelMaxOutputs = keep
+			p.Models = domain.SanitizeModels(parseModels(arr))
 		}
 	}
 	if v, ok := body["protocol"].(string); ok {
@@ -673,18 +651,9 @@ func applyPatch(p *domain.Provider, body map[string]interface{}) {
 		case "", "chat", "responses":
 			p.Protocol = v
 			// 协议变更后清空按模型的探测结果，等待重新探测
-			p.ModelProtocols = nil
-		}
-	}
-	if v, ok := body["modelProtocols"]; ok {
-		if mp, ok := v.(map[string]interface{}); ok {
-			out := make(map[string]string, len(mp))
-			for k, val := range mp {
-				if s, ok := val.(string); ok {
-					out[k] = s
-				}
+			for i := range p.Models {
+				p.Models[i].Protocol = ""
 			}
-			p.ModelProtocols = out
 		}
 	}
 }
@@ -855,7 +824,7 @@ func (m *Manager) HandleGroupHealth(w http.ResponseWriter, _ *http.Request, id s
 		}
 		models := e.Models
 		if len(models) == 0 {
-			models = p.Models
+			models = p.ModelIDs()
 			if len(models) == 0 && p.DefaultModel != "" {
 				models = []string{p.DefaultModel}
 			}
@@ -917,7 +886,7 @@ func (m *Manager) HandleGroupTest(w http.ResponseWriter, r *http.Request, id str
 		}
 		models := e.Models
 		if len(models) == 0 {
-			models = p.Models
+			models = p.ModelIDs()
 			if len(models) == 0 && p.DefaultModel != "" {
 				models = []string{p.DefaultModel}
 			}

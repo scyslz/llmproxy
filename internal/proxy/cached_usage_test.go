@@ -65,8 +65,7 @@ func TestConvertedResponsesToChatLogsCachedTokens(t *testing.T) {
 				Providers: []domain.Provider{
 					{
 						ID: "up", Name: "Up P", BaseURL: srv.URL, APIKey: "k", Enabled: true,
-						Models: []string{"m"}, DefaultModel: "m", Timeout: 5000,
-						ModelProtocols: map[string]string{"m": "chat"},
+						Models: []domain.Model{{ID: "m", Protocol: "chat"}}, DefaultModel: "m", Timeout: 5000,
 					},
 				},
 				Keys: []domain.VirtualKey{{Key: "sk-cached", Name: "Cached Key", ProviderIDs: []string{"up"}}},
@@ -160,8 +159,7 @@ func TestConvertedStreamLogsCachedTokens(t *testing.T) {
 		Providers: []domain.Provider{
 			{
 				ID: "up", Name: "Up P", BaseURL: srv.URL, APIKey: "k", Enabled: true,
-				Models: []string{"m"}, DefaultModel: "m", Timeout: 5000,
-				ModelProtocols: map[string]string{"m": "responses"},
+				Models: []domain.Model{{ID: "m", Protocol: "responses"}}, DefaultModel: "m", Timeout: 5000,
 			},
 		},
 		Keys: []domain.VirtualKey{{Key: "sk-cached", Name: "Cached Key", ProviderIDs: []string{"up"}}},

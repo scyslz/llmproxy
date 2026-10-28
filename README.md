@@ -71,12 +71,12 @@ Docker Compose uses image `scyslz/llmproxy` without local build. Inside the cont
       "baseUrl": "https://api.example.com/v1",
       "apiKey": "sk-xxx",
       "enabled": true,
-      "models": ["gpt-4o"],
-      "defaultModel": "gpt-4o",   // fallback when requested model not in models, defaults to models[0]
-      "protocol": "chat",         // "chat" (default) | "responses" — upstream protocol, auto-probed per model
-      "modelProtocols": {         // auto-filled by probe: model -> actual protocol, cleared on save
-        "gpt-4o-mini": "chat"
-      },
+      "models": [                 // each model carries its own metadata
+        {"id": "gpt-4o", "contextLength": 128000, "maxOutputTokens": 16384},
+        {"id": "gpt-4o-mini", "protocol": "chat"}   // protocol auto-filled by the probe when omitted
+      ],
+      "defaultModel": "gpt-4o",   // fallback when requested model not in models, defaults to models[0].id
+      "protocol": "chat",         // provider default: "chat" (default) | "responses" — per-model protocol overrides it
       "concurrency": 0,           // 0 = unlimited
       "timeout": 120000,          // upstream timeout in ms, 0 = no timeout
       "chatEndpoint": "/chat/completions",       // optional override
@@ -118,14 +118,24 @@ Docker Compose uses image `scyslz/llmproxy` without local build. Inside the cont
 | `baseUrl` | string | Upstream base URL, auto-appends `/v1` if needed |
 | `apiKey` | string | Upstream API key |
 | `enabled` | boolean | Whether enabled |
-| `models` | string[] | Supported models; fallback to `defaultModel` if mismatch |
-| `defaultModel` | string | Fallback model, defaults to `models[0]` |
-| `protocol` | string | Upstream protocol: `chat` (default) or `responses` |
-| `modelProtocols` | map | Per-model discovered protocol (`model -> protocol`), cleared on provider save |
+| `models` | Model[] | Supported models in fallback order (see Model Fields); request falls back to `defaultModel` on mismatch |
+| `defaultModel` | string | Fallback model, defaults to `models[0].id` |
+| `protocol` | string | Provider-wide default protocol: `chat` (default) or `responses`; a model's own `protocol` overrides it |
 | `concurrency` | number | Concurrency limit, `0` = unlimited |
 | `timeout` | number | Upstream timeout in ms, `0` = no timeout |
 | `chatEndpoint` | string | Optional override for chat path (e.g. `/chat/completions`) |
 | `responsesEndpoint` | string | Optional override for responses path (e.g. `/responses`) |
+
+### Model Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Upstream model id (required); duplicates are dropped, first occurrence wins |
+| `contextLength` | number | Context window in tokens; exposed by `/v1/models` as `limit.context` / `context_length` |
+| `maxOutputTokens` | number | Max output tokens; exposed as `limit.output` / `max_output_tokens` |
+| `protocol` | string | Per-model upstream protocol (`chat` / `responses`); empty = auto-probe |
+
+When a provider is created or saved, discovered per-model `protocol` values are reset so the next request probes again.
 
 ### Virtual Key Fields
 
@@ -153,7 +163,7 @@ The prefix is **fixed to `sk-proxy-`** and cannot be changed through the config 
 LLM Proxy natively speaks both OpenAI protocols and converts automatically when inbound and upstream protocols differ (including SSE streaming):
 
 - **Inbound** is determined by request path: `/v1/responses` → `responses`, `/v1/chat/completions` → `chat`
-- **Upstream** is determined per `(provider, model)` as `modelProtocols[model] ?? protocol ?? "chat"` (defaults to `chat` for backward compatibility)
+- **Upstream** is determined per `(provider, model)` as `models[].protocol ?? provider.protocol ?? "chat"` (defaults to `chat`)
 
 | Inbound | Upstream | Action |
 |---------|----------|--------|
@@ -162,9 +172,9 @@ LLM Proxy natively speaks both OpenAI protocols and converts automatically when 
 | `responses` | `chat` | `input`/`instructions`/`tools` → `messages`/`tools`; `max_output_tokens`→`max_tokens`; response `choices`/`tool_calls` → `output`/`function_call` |
 | `chat` | `responses` | `messages`/`tools` → `input`/`tools`; `max_tokens`→`max_output_tokens`; response `output` → `choices` |
 
-**Per-model auto-probe**: When `modelProtocols` is unknown (`probe=true`), the proxy first tries the inbound protocol. If upstream returns **any non-`200`** status, it flips to the other protocol **once** per request, converts the body, and retries (`buildTargetURL` + `convertRequestBody`). On `2xx` success it persists `modelProtocols[model]=flipped` to `config.json` and logs `protocol probe succeeded by flipping to '...'`. Subsequent requests for that model go directly to the discovered protocol.
+**Per-model auto-probe**: When a model's `protocol` is unknown (`probe=true`), the proxy first tries the inbound protocol. If upstream returns **any non-`200`** status, it flips to the other protocol **once** per request, converts the body, and retries (`buildTargetURL` + `convertRequestBody`). On `2xx` success it persists `models[].protocol=flipped` to `config.json` and logs `protocol probe succeeded by flipping to '...'`. Subsequent requests for that model go directly to the discovered protocol.
 
-**Clear on save**: Creating or updating a provider via `POST /api/providers` or `PUT /api/providers/:id` clears `modelProtocols` (set to `null`) so the next request re-probes. This is intentional—editing a provider resets per-model discoveries.
+**Clear on save**: Creating or updating a provider via `POST /api/providers` or `PUT /api/providers/:id` clears every model's discovered `protocol`, so the next request re-probes. This is intentional—editing a provider resets per-model discoveries.
 
 **Playground & Direct Test**: `POST /api/providers/:id/chat/completions` always sends `chat` from the UI. If the provider is `responses` (or unknown but probed as `responses`), the server converts the request to `responses` and transpile the response back to `chat` for the UI (`internal/proxy/models.go:150` + `internal/proxy/protocol.go:179/247/276`).
 

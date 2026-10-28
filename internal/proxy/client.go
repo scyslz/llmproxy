@@ -10,24 +10,56 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"llmproxy/internal/domain"
 )
 
 // Provider 是转发目标上游的实例化配置快照（随配置变更重建）。
 type Provider struct {
-	ID             string
-	Name           string
-	BaseURL        string
-	APIKey         string
-	Models         []string
+	ID                string
+	Name              string
+	BaseURL           string
+	APIKey            string
+	Models            []domain.Model
 	ChatEndpoint      string
 	ResponsesEndpoint string
-	DefaultModel   string
-	Protocol            string
-	ModelProtocols      map[string]string
-	ModelContextLengths map[string]int
-	ModelMaxOutputs     map[string]int
-	Timeout             time.Duration
-	Concurrency         int
+	DefaultModel      string
+	Protocol          string
+	Timeout           time.Duration
+	Concurrency       int
+}
+
+// ModelByID 返回指定模型的元数据，未配置时返回 nil。
+func (p *Provider) ModelByID(id string) *domain.Model {
+	for i := range p.Models {
+		if p.Models[i].ID == id {
+			return &p.Models[i]
+		}
+	}
+	return nil
+}
+
+// HasModel 报告该 provider 是否声明了指定模型。
+func (p *Provider) HasModel(id string) bool { return p.ModelByID(id) != nil }
+
+// ModelIDs 按 fallback 顺序返回模型 id 列表。
+func (p *Provider) ModelIDs() []string {
+	out := make([]string, 0, len(p.Models))
+	for _, m := range p.Models {
+		out = append(out, m.ID)
+	}
+	return out
+}
+
+// DefaultModelID 返回 defaultModel，缺省为首个模型。
+func (p *Provider) DefaultModelID() string {
+	if p.DefaultModel != "" {
+		return p.DefaultModel
+	}
+	if len(p.Models) > 0 {
+		return p.Models[0].ID
+	}
+	return ""
 }
 
 // Client 执行对上游的具体 HTTP 请求。
@@ -238,4 +270,3 @@ func ShortID() string {
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }
-

@@ -168,8 +168,8 @@ func TestGroupCreateValidation(t *testing.T) {
 
 func TestGroupHealth(t *testing.T) {
 	m := newGroupTestManager(t, []domain.Provider{
-		{ID: "p1", Name: "P1", Enabled: true, Models: []string{"m1", "m2"}},
-		{ID: "p2", Name: "P2", Enabled: true, Models: []string{"m3"}, DefaultModel: "m3"},
+		{ID: "p1", Name: "P1", Enabled: true, Models: domain.Models("m1", "m2")},
+		{ID: "p2", Name: "P2", Enabled: true, Models: domain.Models("m3"), DefaultModel: "m3"},
 	})
 	_ = m.Cfg.Update(func(c *domain.Config) {
 		c.Groups = []domain.ProviderGroup{
@@ -243,8 +243,8 @@ func TestGroupTest(t *testing.T) {
 	defer down.Close()
 
 	m := newGroupTestManager(t, []domain.Provider{
-		{ID: "ok", Name: "OK", BaseURL: up.URL, APIKey: "k", Enabled: true, Models: []string{"m"}, DefaultModel: "m", Timeout: 3000},
-		{ID: "bad", Name: "Bad", BaseURL: down.URL, APIKey: "k", Enabled: true, Models: []string{"m"}, DefaultModel: "m", Timeout: 3000},
+		{ID: "ok", Name: "OK", BaseURL: up.URL, APIKey: "k", Enabled: true, Models: domain.Models("m"), DefaultModel: "m", Timeout: 3000},
+		{ID: "bad", Name: "Bad", BaseURL: down.URL, APIKey: "k", Enabled: true, Models: domain.Models("m"), DefaultModel: "m", Timeout: 3000},
 	})
 	_ = m.Cfg.Update(func(c *domain.Config) {
 		c.Groups = []domain.ProviderGroup{

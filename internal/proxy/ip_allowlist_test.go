@@ -46,7 +46,7 @@ func allowlistUpstream(t *testing.T) (*httptest.Server, domain.Provider) {
 	t.Cleanup(srv.Close)
 	return srv, domain.Provider{
 		ID: "up", Name: "Up", BaseURL: srv.URL, APIKey: "k", Enabled: true,
-		Models: []string{"m"}, DefaultModel: "m", Timeout: 2000,
+		Models: domain.Models("m"), DefaultModel: "m", Timeout: 2000,
 	}
 }
 
@@ -216,4 +216,3 @@ func TestTrustedProxyMissingHeadersFallsBackToRemoteAddr(t *testing.T) {
 		t.Fatalf("internal non-allowlisted no key status = %d, want 401", rec3.Code)
 	}
 }
-

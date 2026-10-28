@@ -311,3 +311,62 @@ func TestHandleCreateKeyAlwaysUsesFixedPrefix(t *testing.T) {
 		t.Fatalf("generated key = %q, want sk-proxy- prefix", created.Key)
 	}
 }
+
+func TestHandleCreateProviderSanitizesModelEntries(t *testing.T) {
+	m := newTestManager(t)
+	body := `{"id":"p1","name":"P1","baseUrl":"http://up","models":[
+		{"id":" m1 ","contextLength":128000,"maxOutputTokens":16384},
+		{"id":"m1"},
+		{"id":""},
+		{"id":"m2","maxOutputTokens":-5,"protocol":"bogus"}
+	]}`
+	w := postJSON(m, "/api/providers", body, m.HandleCreateProvider)
+	if w.Code != 201 {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var created domain.Provider
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(created.Models) != 2 {
+		t.Fatalf("models = %+v, want 2 entries", created.Models)
+	}
+	if created.Models[0].ID != "m1" || created.Models[0].ContextLength != 128000 || created.Models[0].MaxOutputTokens != 16384 {
+		t.Fatalf("first model = %+v", created.Models[0])
+	}
+	if created.Models[1].ID != "m2" || created.Models[1].MaxOutputTokens != 0 || created.Models[1].Protocol != "" {
+		t.Fatalf("second model not sanitized: %+v", created.Models[1])
+	}
+}
+
+func TestHandleUpdateProviderClearsProbedProtocols(t *testing.T) {
+	m := newTestManager(t)
+	if err := m.Cfg.Update(func(c *domain.Config) {
+		c.Providers = append(c.Providers, domain.Provider{
+			ID: "p1", Name: "P1", BaseURL: "http://up", Enabled: true,
+			Models: []domain.Model{
+				{ID: "m1", ContextLength: 1000, Protocol: "responses"},
+				{ID: "m2", Protocol: "chat"},
+			},
+		})
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	w := putJSON(m, "/api/providers/p1", `{"models":[{"id":"m1","contextLength":2000},{"id":"m2"}]}`, func(w http.ResponseWriter, r *http.Request) {
+		m.HandleUpdateProvider(w, r, "p1")
+	})
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	cfg := m.Cfg.Get()
+	p := cfg.Providers[0]
+	if len(p.Models) != 2 || p.Models[0].ContextLength != 2000 {
+		t.Fatalf("models not updated: %+v", p.Models)
+	}
+	for _, model := range p.Models {
+		if model.Protocol != "" {
+			t.Fatalf("probed protocol was not cleared on save: %+v", model)
+		}
+	}
+}

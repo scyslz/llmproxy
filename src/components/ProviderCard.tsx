@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Provider } from "../types";
+import { Model, Provider } from "../types";
 import { Layers, Plus, Trash2, Edit2, Play, CheckCircle2, Shield, Eye, EyeOff, Globe, RefreshCw, Search, Check, X, Sparkles } from "lucide-react";
 import { apiFetch } from "../lib/api";
 
@@ -37,12 +37,6 @@ const PRESETS = [
     models: ["claude-3-5-sonnet-latest", "claude-3-5-haiku-latest"]
   }
 ];
-
-const formatTokens = (n: number): string => {
-  if (n >= 1000000) return `${(n / 1000000).toFixed(n % 1000000 === 0 ? 0 : 1)}M`;
-  if (n >= 1000) return `${Math.round(n / 1000)}K`;
-  return `${n}`;
-};
 
 export default function ProviderCard({
   providers,
@@ -114,14 +108,22 @@ export default function ProviderCard({
       name: p.name || "",
       baseUrl: p.baseUrl || "",
       apiKey: p.apiKey || "",
-      modelsString: (p.models || []).join(", "),
+      modelsString: (p.models || []).map((m) => m.id).join(", "),
       concurrency: p.concurrency || 0,
         chatEndpoint: p.chatEndpoint || "",
         responsesEndpoint: p.responsesEndpoint || "",
       defaultModel: p.defaultModel || "",
       protocol: p.protocol || "",
-      modelContextLengths: p.modelContextLengths || {},
-      modelMaxOutputs: p.modelMaxOutputs || {}
+      modelContextLengths: Object.fromEntries(
+        (p.models || [])
+          .filter((m) => (m.contextLength || 0) > 0)
+          .map((m) => [m.id, m.contextLength as number])
+      ),
+      modelMaxOutputs: Object.fromEntries(
+        (p.models || [])
+          .filter((m) => (m.maxOutputTokens || 0) > 0)
+          .map((m) => [m.id, m.maxOutputTokens as number])
+      )
     });
     setIsEditing(p.id);
   };
@@ -166,19 +168,25 @@ export default function ProviderCard({
       if (!res.ok || data.error) {
         throw new Error(data.error || "Failed to fetch models");
       }
-      if (data.models && data.models.length > 0) {
-        setAvailableRemoteModels(data.models);
+      const fetched = (data.models || []) as Model[];
+      if (fetched.length > 0) {
+        setAvailableRemoteModels(fetched.map((m) => m.id));
         const currentList = (formData.modelsString || "")
           .split(",")
           .map(m => (m || "").trim())
           .filter(Boolean);
-        const merged = Array.from(new Set([...currentList, ...data.models]));
-        const incoming = (data.contextLengths || {}) as Record<string, number>;
+        const merged = Array.from(new Set([...currentList, ...fetched.map((m) => m.id)]));
+        const incomingCtx: Record<string, number> = {};
+        const incomingOut: Record<string, number> = {};
+        for (const m of fetched) {
+          if ((m.contextLength || 0) > 0) incomingCtx[m.id] = m.contextLength as number;
+          if ((m.maxOutputTokens || 0) > 0) incomingOut[m.id] = m.maxOutputTokens as number;
+        }
         setFormData(prev => ({
           ...prev,
           modelsString: merged.join(", "),
-          modelContextLengths: { ...(prev.modelContextLengths || {}), ...incoming },
-          modelMaxOutputs: { ...(prev.modelMaxOutputs || {}), ...((data.maxOutputs || {}) as Record<string, number>) }
+          modelContextLengths: { ...(prev.modelContextLengths || {}), ...incomingCtx },
+          modelMaxOutputs: { ...(prev.modelMaxOutputs || {}), ...incomingOut }
         }));
       } else {
         setFetchError("No models returned from provider endpoint.");
@@ -278,15 +286,9 @@ export default function ProviderCard({
         })
       });
       const data = await res.json();
-      if (res.ok && data.models && data.models.length > 0) {
-        const patch: Partial<Provider> = { models: data.models };
-        if (data.contextLengths && Object.keys(data.contextLengths).length > 0) {
-          patch.modelContextLengths = data.contextLengths;
-        }
-        if (data.maxOutputs && Object.keys(data.maxOutputs).length > 0) {
-          patch.modelMaxOutputs = data.maxOutputs;
-        }
-        onUpdate(p.id, patch);
+      const fetched = (data.models || []) as Model[];
+      if (res.ok && fetched.length > 0) {
+        onUpdate(p.id, { models: fetched });
       } else {
         alert(data.error || "No models returned from provider endpoint.");
       }
@@ -307,25 +309,83 @@ export default function ProviderCard({
   const filteredModels = allKnownModels.filter(m =>
     m.toLowerCase().includes(modelKeyword.toLowerCase())
   );
+  const pendingModel = modelKeyword.trim();
+  const canAddPending = pendingModel !== "" && !allKnownModels.includes(pendingModel);
+
+  // Enter in the picker: exact known id wins, a single partial match is
+  // accepted as-is, otherwise the typed value is added as a custom model id.
+  const submitKeyword = () => {
+    const q = modelKeyword.trim();
+    if (!q) return;
+    const exact = allKnownModels.find((m) => m.toLowerCase() === q.toLowerCase());
+    if (exact) {
+      addModels(exact);
+      return;
+    }
+    if (filteredModels.length === 1) {
+      addModels(filteredModels[0]);
+      return;
+    }
+    addModels(q);
+  };
+
+  // All model-list mutations go through one functional updater so the selected
+  // list and its limits always stay in sync, regardless of render timing.
+  const updateModels = (fn: (ids: string[]) => string[]) => {
+    setFormData((prev) => {
+      const current = (prev.modelsString || "")
+        .split(",")
+        .map((m) => m.trim())
+        .filter(Boolean);
+      const next = Array.from(new Set(fn(current)));
+
+      const ctx = { ...(prev.modelContextLengths || {}) };
+      const out = { ...(prev.modelMaxOutputs || {}) };
+      for (const id of Object.keys(ctx)) {
+        if (!next.includes(id)) delete ctx[id];
+      }
+      for (const id of Object.keys(out)) {
+        if (!next.includes(id)) delete out[id];
+      }
+
+      return {
+        ...prev,
+        modelsString: next.join(", "),
+        defaultModel: next.includes(prev.defaultModel) ? prev.defaultModel : "",
+        modelContextLengths: ctx,
+        modelMaxOutputs: out
+      };
+    });
+  };
+
+  const addModels = (raw: string) => {
+    const incoming = (raw || "")
+      .split(",")
+      .map((m) => m.trim())
+      .filter(Boolean);
+    if (incoming.length === 0) return;
+    updateModels((ids) => [...ids, ...incoming]);
+    setModelKeyword("");
+  };
+
+  const removeModel = (model: string) => {
+    updateModels((ids) => ids.filter((m) => m !== model));
+  };
 
   const toggleModelSelection = (model: string) => {
-    let nextList = [...currentSelectedModels];
-    if (nextList.includes(model)) {
-      nextList = nextList.filter(m => m !== model);
-    } else {
-      nextList.push(model);
-    }
-    setFormData(prev => ({ ...prev, modelsString: nextList.join(", ") }));
+    updateModels((ids) => (ids.includes(model) ? ids.filter((m) => m !== model) : [...ids, model]));
   };
 
   const selectAllFiltered = () => {
-    const merged = Array.from(new Set([...currentSelectedModels, ...filteredModels]));
-    setFormData(prev => ({ ...prev, modelsString: merged.join(", ") }));
+    updateModels((ids) => [...ids, ...filteredModels]);
   };
 
   const deselectAllFiltered = () => {
-    const nextList = currentSelectedModels.filter(m => !filteredModels.includes(m));
-    setFormData(prev => ({ ...prev, modelsString: nextList.join(", ") }));
+    updateModels((ids) => ids.filter((id) => !filteredModels.includes(id)));
+  };
+
+  const clearAllModels = () => {
+    updateModels(() => []);
   };
 
   const handleSave = (e: React.FormEvent) => {
@@ -337,28 +397,27 @@ export default function ProviderCard({
 
     const dm = (formData.defaultModel || "").trim();
     const defaultModel = (dm && models.includes(dm)) ? dm : undefined;
-    const modelContextLengths: Record<string, number> = {};
-    const modelMaxOutputs: Record<string, number> = {};
-    for (const m of models) {
-      const n = formData.modelContextLengths?.[m];
-      if (n && n > 0) modelContextLengths[m] = n;
-      const o = formData.modelMaxOutputs?.[m];
-      if (o && o > 0) modelMaxOutputs[m] = o;
-    }
+    const modelEntries: Model[] = models.map((id) => {
+      const ctx = formData.modelContextLengths?.[id];
+      const out = formData.modelMaxOutputs?.[id];
+      return {
+        id,
+        ...(ctx && ctx > 0 ? { contextLength: ctx } : {}),
+        ...(out && out > 0 ? { maxOutputTokens: out } : {})
+      };
+    });
 
     const submissionData = {
       id: (formData.id || "").toLowerCase().trim(),
       name: (formData.name || "").trim(),
       baseUrl: (formData.baseUrl || "").trim(),
       apiKey: (formData.apiKey || "").trim(),
-      models,
+      models: modelEntries,
       concurrency: formData.concurrency || 0,
       chatEndpoint: (formData.chatEndpoint || "").trim() || undefined,
       responsesEndpoint: (formData.responsesEndpoint || "").trim() || undefined,
       defaultModel,
-      protocol: formData.protocol || undefined,
-      modelContextLengths,
-      modelMaxOutputs
+      protocol: formData.protocol || undefined
     };
 
     if (isEditing === "new") {
@@ -529,7 +588,7 @@ export default function ProviderCard({
             </div>
 
             {/* Model Section with API Fetching & Keyword Filtering */}
-            <div className="space-y-3 bg-white border border-neutral-200 rounded-xl p-4 shadow-2xs">
+            <div className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="min-w-0">
                   <label className="text-xs font-bold text-neutral-800 block">Supported Models</label>
@@ -570,94 +629,177 @@ export default function ProviderCard({
                 </div>
               )}
 
-              {/* Keyword Filter & Bulk Actions */}
-              {allKnownModels.length > 0 && (
-                <div className="space-y-2 pt-1">
-                  <div className="flex items-center space-x-2">
-                    <div className="relative flex-1">
-                      <Search className="w-3.5 h-3.5 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                      <input
-                        type="text"
-                        placeholder="Filter models by keyword (e.g. flash, gpt-4, reasoner)..."
-                        value={modelKeyword}
-                        onChange={(e) => setModelKeyword(e.target.value)}
-                        className="w-full bg-neutral-50 border border-neutral-200 rounded-lg pl-8 pr-8 py-1.5 text-xs text-neutral-800 outline-none focus:border-neutral-400 focus:bg-white"
-                      />
-                      {modelKeyword && (
-                        <button
-                          type="button"
-                          onClick={() => setModelKeyword("")}
-                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </div>
+              {/* Model picker: one box with search, bulk actions and results */}
+              <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white">
+                <div className="flex items-center gap-2 border-b border-neutral-100 px-2.5 py-1.5">
+                  <Search className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
+                  <input
+                    type="text"
+                    placeholder={allKnownModels.length > 0 ? "Search or add a model id (Enter to add)…" : "Type a model id and press Enter to add…"}
+                    value={modelKeyword}
+                    spellCheck={false}
+                    onChange={(e) => setModelKeyword(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        submitKeyword();
+                      }
+                    }}
+                    className="min-w-0 flex-1 bg-transparent py-1 font-mono text-[11px] text-neutral-800 outline-none placeholder:font-sans placeholder:text-neutral-400"
+                  />
+                  {modelKeyword && (
                     <button
                       type="button"
-                      onClick={selectAllFiltered}
-                      className="text-[11px] font-semibold bg-neutral-100 hover:bg-neutral-200 text-neutral-700 px-2.5 py-1.5 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
+                      onClick={() => setModelKeyword("")}
+                      className="shrink-0 cursor-pointer rounded p-0.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600"
+                      title="Clear search"
                     >
-                      Select Filtered
+                      <X className="h-3.5 w-3.5" />
                     </button>
-                    <button
-                      type="button"
-                      onClick={deselectAllFiltered}
-                      className="text-[11px] font-semibold bg-neutral-100 hover:bg-neutral-200 text-neutral-700 px-2.5 py-1.5 rounded-lg transition-colors whitespace-nowrap cursor-pointer"
-                    >
-                      Deselect Filtered
-                    </button>
-                  </div>
-
-                  {/* Model Pill Checkboxes */}
-                  <div className="border border-neutral-200 rounded-lg p-2.5 max-h-36 overflow-y-auto bg-neutral-50/50 flex flex-wrap gap-1.5">
-                    {filteredModels.length === 0 ? (
-                      <div className="text-xs text-neutral-400 italic py-2 w-full text-center">
-                        No models match keyword "{modelKeyword}"
-                      </div>
-                    ) : (
-                      filteredModels.map((m) => {
-                        const isSelected = currentSelectedModels.includes(m);
-                        return (
-                          <button
-                            key={m}
-                            type="button"
-                            onClick={() => toggleModelSelection(m)}
-                            className={`text-xs font-mono px-2.5 py-1 rounded-md transition-all flex items-center space-x-1.5 cursor-pointer ${
-                              isSelected
-                                ? "bg-neutral-900 text-white font-medium shadow-2xs"
-                                : "bg-white border border-neutral-200 text-neutral-600 hover:border-neutral-400"
-                            }`}
-                          >
-                            <span>{m}</span>
-                            {isSelected ? <Check className="w-3 h-3 text-white shrink-0" /> : <Plus className="w-3 h-3 text-neutral-400 shrink-0" />}
-                          </button>
-                        );
-                      })
-                    )}
-                  </div>
+                  )}
                 </div>
-              )}
 
-              <div className="relative">
-                <textarea
-                  rows={2}
-                  placeholder="gpt-4o, gpt-4o-mini, o1-mini"
-                  value={formData.modelsString}
-                  onChange={(e) => setFormData({ ...formData, modelsString: e.target.value })}
-                  className="w-full bg-neutral-50 border border-neutral-300 rounded-xl px-3.5 py-2 text-sm font-mono text-neutral-800 outline-none focus:border-neutral-500 focus:ring-1 focus:ring-neutral-500 focus:bg-white transition-colors"
-                />
-                {(formData.modelsString || "").trim() !== "" && (
+                <div className="flex flex-wrap items-center gap-2 border-b border-neutral-100 bg-neutral-50/60 px-2.5 py-1">
+                  <span className="mr-auto text-[10px] text-neutral-500">
+                    {currentSelectedModels.length} selected · {allKnownModels.length} known
+                  </span>
                   <button
                     type="button"
-                    onClick={() => setFormData({ ...formData, modelsString: "", defaultModel: "" })}
-                    className="absolute right-2 top-1.5 p-1 rounded-md text-neutral-400 hover:text-red-500 hover:bg-red-50 transition-colors cursor-pointer"
-                    title="Clear all models"
+                    onClick={selectAllFiltered}
+                    className="cursor-pointer rounded-md bg-white px-2 py-0.5 text-[10px] font-semibold text-neutral-700 ring-1 ring-neutral-200 transition-colors hover:bg-neutral-100"
                   >
-                    <X className="w-3.5 h-3.5" />
+                    Select shown
                   </button>
+                  <button
+                    type="button"
+                    onClick={deselectAllFiltered}
+                    disabled={filteredModels.every((m) => !currentSelectedModels.includes(m))}
+                    className="cursor-pointer rounded-md bg-white px-2 py-0.5 text-[10px] font-semibold text-neutral-700 ring-1 ring-neutral-200 transition-colors hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Deselect shown
+                  </button>
+                </div>
+
+                <div className="flex max-h-40 flex-wrap gap-1.5 overflow-y-auto p-2.5">
+                  {canAddPending && (
+                    <button
+                      type="button"
+                      onClick={() => addModels(pendingModel)}
+                      className="flex cursor-pointer items-center gap-1 rounded-md border border-dashed border-neutral-400 bg-white px-2.5 py-1 font-mono text-[11px] text-neutral-700 transition-colors hover:border-neutral-900 hover:bg-neutral-900 hover:text-white"
+                      title="Add this model id"
+                    >
+                      <Plus className="h-3 w-3 shrink-0" />
+                      <span className="max-w-[220px] truncate">{pendingModel}</span>
+                    </button>
+                  )}
+                  {filteredModels.map((m) => {
+                    const isSelected = currentSelectedModels.includes(m);
+                    return (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => toggleModelSelection(m)}
+                        className={`flex cursor-pointer items-center space-x-1.5 rounded-md px-2.5 py-1 font-mono text-[11px] transition-all ${
+                          isSelected
+                            ? "bg-neutral-900 font-medium text-white shadow-2xs"
+                            : "border border-neutral-200 bg-white text-neutral-600 hover:border-neutral-400"
+                        }`}
+                      >
+                        <span>{m}</span>
+                        {isSelected ? (
+                          <Check className="h-3 w-3 shrink-0 text-white" />
+                        ) : (
+                          <Plus className="h-3 w-3 shrink-0 text-neutral-400" />
+                        )}
+                      </button>
+                    );
+                  })}
+                  {!canAddPending && filteredModels.length === 0 && (
+                    <span className="py-1 text-[11px] italic text-neutral-400">
+                      {allKnownModels.length === 0
+                        ? "No models yet — type an id above and press Enter."
+                        : `No model matches “${modelKeyword}” — press Enter to add it.`}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Selected models: ids and their limits live in one list */}
+              <div className="border border-neutral-200 rounded-xl overflow-hidden bg-white">
+                <div className="flex items-center justify-between gap-2 border-b border-neutral-200 bg-neutral-50 px-3 py-2">
+                  <span className="text-[11px] font-bold text-neutral-700">
+                    Selected Models ({currentSelectedModels.length})
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-neutral-500">
+                      {currentSelectedModels.filter((m) => (formData.modelContextLengths?.[m] || 0) > 0).length}/
+                      {currentSelectedModels.length} limits set
+                    </span>
+                    <button
+                      type="button"
+                      onClick={clearAllModels}
+                      disabled={currentSelectedModels.length === 0}
+                      className="cursor-pointer rounded-md bg-white px-2 py-0.5 text-[10px] font-semibold text-red-600 ring-1 ring-red-200 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40"
+                      title="Remove every selected model and its limits"
+                    >
+                      Clear all
+                    </button>
+                  </div>
+                </div>
+
+                {currentSelectedModels.length === 0 ? (
+                  <p className="px-3 py-3 text-[11px] text-neutral-400 italic">
+                    No models selected — search for a model above.
+                  </p>
+                ) : (
+                  <div className="max-h-56 overflow-y-auto divide-y divide-neutral-100">
+                    {currentSelectedModels.map((m) => {
+                      const ctx = formData.modelContextLengths?.[m] || 0;
+                      const out = formData.modelMaxOutputs?.[m] || 0;
+                      return (
+                        <div key={m} className="flex items-center gap-2 px-3 py-1.5">
+                          <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-neutral-700" title={m}>
+                            {m}
+                          </span>
+                          <input
+                            type="number"
+                            min="0"
+                            inputMode="numeric"
+                            placeholder="context"
+                            title="Max context length (tokens)"
+                            value={ctx || ""}
+                            onChange={(e) => setModelContextLength(m, parseInt(e.target.value) || 0)}
+                            className="w-24 shrink-0 rounded-md border border-neutral-200 bg-white px-1.5 py-0.5 text-right font-mono text-[10px] text-neutral-800 outline-none focus:border-neutral-400"
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            inputMode="numeric"
+                            placeholder="max out"
+                            title="Max output tokens"
+                            value={out || ""}
+                            onChange={(e) => setModelMaxOutput(m, parseInt(e.target.value) || 0)}
+                            className="w-20 shrink-0 rounded-md border border-neutral-200 bg-white px-1.5 py-0.5 text-right font-mono text-[10px] text-neutral-800 outline-none focus:border-neutral-400"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removeModel(m)}
+                            className="shrink-0 cursor-pointer rounded p-0.5 text-neutral-400 transition-colors hover:bg-red-50 hover:text-red-500"
+                            title="Remove model"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
+
+              <p className="text-[10px] text-neutral-500">
+                Limits are optional. Auto Context searches a public model database by model name, then asks the model
+                for anything still missing, and fills both fields. Removing a model drops its limits too.
+              </p>
 
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-neutral-700">Default Model (fallback)</label>
@@ -672,62 +814,6 @@ export default function ProviderCard({
                   ))}
                 </select>
                 <p className="text-[10px] text-neutral-500">Used when a request model is not in the Supported Models list. Leave empty to keep the current first-model behavior.</p>
-              </div>
-
-              {/* Context & Output Limits */}
-              <div className="space-y-2 border-t border-neutral-100 pt-3">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-neutral-800">Context / Max Output (tokens)</label>
-                  <span className="text-[10px] text-neutral-400">
-                    {currentSelectedModels.filter(m => (formData.modelContextLengths?.[m] || 0) > 0).length}/{currentSelectedModels.length} set
-                  </span>
-                </div>
-                {currentSelectedModels.length === 0 ? (
-                  <p className="text-[10px] text-neutral-400 italic">Add models to set their limits.</p>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-40 overflow-y-auto pr-1">
-                    {currentSelectedModels.map((m) => {
-                      const val = formData.modelContextLengths?.[m] || 0;
-                      const out = formData.modelMaxOutputs?.[m] || 0;
-                      return (
-                        <div key={m} className="flex items-center gap-1.5 bg-neutral-50 border border-neutral-200 rounded-lg px-2 py-1">
-                          <span className="text-[10px] font-mono text-neutral-600 truncate flex-1" title={m}>{m}</span>
-                          {val > 0 && <span className="text-[9px] text-emerald-600 font-semibold shrink-0" title="Context">{formatTokens(val)}</span>}
-                          {out > 0 && <span className="text-[9px] text-sky-600 font-semibold shrink-0" title="Max output">{formatTokens(out)}</span>}
-                          <input
-                            type="number"
-                            min="0"
-                            placeholder="ctx"
-                            title="Max context length"
-                            value={val || ""}
-                            onChange={(e) => setModelContextLength(m, parseInt(e.target.value) || 0)}
-                            className="w-16 text-[10px] font-mono text-right bg-white border border-neutral-200 rounded px-1.5 py-0.5 outline-none focus:border-neutral-400"
-                          />
-                          <input
-                            type="number"
-                            min="0"
-                            placeholder="out"
-                            title="Max output tokens"
-                            value={out || ""}
-                            onChange={(e) => setModelMaxOutput(m, parseInt(e.target.value) || 0)}
-                            className="w-16 text-[10px] font-mono text-right bg-white border border-neutral-200 rounded px-1.5 py-0.5 outline-none focus:border-neutral-400"
-                          />
-                          {(val > 0 || out > 0) && (
-                            <button
-                              type="button"
-                              onClick={() => { setModelContextLength(m, 0); setModelMaxOutput(m, 0); }}
-                              className="text-neutral-400 hover:text-red-500 shrink-0 cursor-pointer"
-                              title="Clear limits"
-                            >
-                              <X className="w-3 h-3" />
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-                <p className="text-[10px] text-neutral-500">Auto Context searches a public model database by model name, then asks the model itself for anything still missing, and fills the max context window and max output. You can override any value manually.</p>
               </div>
 
             </div>
@@ -781,9 +867,9 @@ export default function ProviderCard({
           const isActive = p.enabled;
           const hasKey = p.apiKey && p.apiKey.length > 0;
           const cardKeyword = cardSearchKeywords[p.id] || "";
-          const cardFilteredModels = (p.models || []).filter(m =>
-            m.toLowerCase().includes(cardKeyword.toLowerCase())
-          );
+          const cardFilteredModels = (p.models || [])
+            .map((m) => m.id)
+            .filter((m) => m.toLowerCase().includes(cardKeyword.toLowerCase()));
           if (p.defaultModel && cardFilteredModels.includes(p.defaultModel)) {
             cardFilteredModels.sort((a, b) =>
               (a === p.defaultModel ? -1 : 0) - (b === p.defaultModel ? -1 : 0)
@@ -900,7 +986,7 @@ export default function ProviderCard({
                         <span className="text-[10px] text-neutral-400 italic py-1">No models match "{cardKeyword}"</span>
                       ) : (
                         cardFilteredModels.map((model) => {
-                          const isDefault = (p.defaultModel || (p.models || [])[0]) === model;
+                          const isDefault = (p.defaultModel || (p.models || [])[0]?.id) === model;
                           return (
                             <span
                               key={model}

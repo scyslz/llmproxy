@@ -101,12 +101,9 @@ func ProviderFromDomain(p *domain.Provider) *Provider {
 		ChatEndpoint:      p.ChatEndpoint,
 		ResponsesEndpoint: p.ResponsesEndpoint,
 		DefaultModel:      p.DefaultModel,
-		Protocol:            p.Protocol,
-		ModelProtocols:      p.ModelProtocols,
-		ModelContextLengths: p.ModelContextLengths,
-		ModelMaxOutputs:     p.ModelMaxOutputs,
-		Timeout:             time.Duration(p.Timeout) * time.Millisecond,
-		Concurrency:         p.Concurrency,
+		Protocol:          p.Protocol,
+		Timeout:           time.Duration(p.Timeout) * time.Millisecond,
+		Concurrency:       p.Concurrency,
 	}
 }
 
@@ -248,8 +245,8 @@ func (a *App) attemptProvider(h *handlerCtx, p *Provider, reqBody map[string]int
 	candBody := reqBody
 	candModel := origModel
 	if (h.method == "POST" || h.method == "PUT") && candModel != "" {
-		if !containsStr(p.Models, candModel) && len(p.Models) > 0 {
-			fallback := orDefault(p.DefaultModel, p.Models[0])
+		if !p.HasModel(candModel) && len(p.Models) > 0 {
+			fallback := orDefault(p.DefaultModel, p.ModelIDs()[0])
 			if h.logDetail == "all" {
 				h.proxyLog(a, logging.LevelWarn, "[API Proxy] Model '"+candModel+"' not supported by provider '"+p.Name+"'. Substituting with fallback '"+fallback+"'.")
 			}

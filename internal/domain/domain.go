@@ -1,27 +1,101 @@
 package domain
 
+import "strings"
+
+// Model is one model a provider serves, together with the metadata the proxy
+// needs for it: context window, max output tokens, and the upstream protocol it
+// speaks. Protocol is empty when it is still unknown and must be auto-probed.
+type Model struct {
+	ID              string `json:"id"`
+	ContextLength   int    `json:"contextLength,omitempty"`
+	MaxOutputTokens int    `json:"maxOutputTokens,omitempty"`
+	Protocol        string `json:"protocol,omitempty"`
+}
+
+// Models builds a model list from bare ids. It keeps test fixtures and defaults
+// readable when no limits are known yet.
+func Models(ids ...string) []Model {
+	out := make([]Model, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, Model{ID: id})
+	}
+	return out
+}
+
+// SanitizeModels trims model ids, drops blanks and duplicates (first occurrence
+// wins, preserving fallback order) and clamps negative limits to zero.
+func SanitizeModels(in []Model) []Model {
+	out := make([]Model, 0, len(in))
+	seen := make(map[string]bool, len(in))
+	for _, m := range in {
+		m.ID = strings.TrimSpace(m.ID)
+		if m.ID == "" || seen[m.ID] {
+			continue
+		}
+		seen[m.ID] = true
+		if m.ContextLength < 0 {
+			m.ContextLength = 0
+		}
+		if m.MaxOutputTokens < 0 {
+			m.MaxOutputTokens = 0
+		}
+		switch m.Protocol {
+		case "chat", "responses":
+		default:
+			m.Protocol = ""
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
 // Provider describes a single upstream LLM provider.
 type Provider struct {
-	ID                string   `json:"id"`
-	Name              string   `json:"name"`
-	BaseURL           string   `json:"baseUrl"`
-	APIKey            string   `json:"apiKey,omitempty"`
-	Enabled           bool     `json:"enabled"`
-	Models            []string `json:"models,omitempty"`
-	Concurrency       int      `json:"concurrency,omitempty"` // 0 or unset = unlimited
-	Timeout           int      `json:"timeout,omitempty"`     // upstream request timeout in ms, 0 or unset = none
-	ChatEndpoint      string   `json:"chatEndpoint,omitempty"`
-	ResponsesEndpoint string   `json:"responsesEndpoint,omitempty"`
-	DefaultModel      string   `json:"defaultModel,omitempty"`
-	// Protocol 声明该 provider 接受的对话协议：chat（/v1/chat/completions）或
-	// responses（/v1/responses）。空字符串表示未知，由代理在运行时按 404 探测。
+	ID                string  `json:"id"`
+	Name              string  `json:"name"`
+	BaseURL           string  `json:"baseUrl"`
+	APIKey            string  `json:"apiKey,omitempty"`
+	Enabled           bool    `json:"enabled"`
+	Models            []Model `json:"models,omitempty"`
+	Concurrency       int     `json:"concurrency,omitempty"` // 0 or unset = unlimited
+	Timeout           int     `json:"timeout,omitempty"`     // upstream request timeout in ms, 0 or unset = none
+	ChatEndpoint      string  `json:"chatEndpoint,omitempty"`
+	ResponsesEndpoint string  `json:"responsesEndpoint,omitempty"`
+	DefaultModel      string  `json:"defaultModel,omitempty"`
+	// Protocol is the provider-wide default: chat (/v1/chat/completions) or
+	// responses (/v1/responses). Empty means unknown; each model can override it
+	// through Model.Protocol, which the 404 probe fills in automatically.
 	Protocol string `json:"protocol,omitempty"`
-	// ModelProtocols 按 (model) 覆盖 Protocol，由 404 探测成功后自动写入。
-	ModelProtocols map[string]string `json:"modelProtocols,omitempty"`
-	// ModelContextLengths 按 model id 记录上游返回的最大上下文（token）。
-	ModelContextLengths map[string]int `json:"modelContextLengths,omitempty"`
-	// ModelMaxOutputs 按 model id 记录单次最大输出（token）。
-	ModelMaxOutputs map[string]int `json:"modelMaxOutputs,omitempty"`
+}
+
+// ModelByID returns the model entry with the given id, or nil.
+func (p *Provider) ModelByID(id string) *Model {
+	for i := range p.Models {
+		if p.Models[i].ID == id {
+			return &p.Models[i]
+		}
+	}
+	return nil
+}
+
+// ModelIDs returns the model ids in fallback order.
+func (p *Provider) ModelIDs() []string {
+	out := make([]string, 0, len(p.Models))
+	for _, m := range p.Models {
+		out = append(out, m.ID)
+	}
+	return out
+}
+
+// DefaultModelID returns defaultModel, or the first configured model.
+func (p *Provider) DefaultModelID() string {
+	if p.DefaultModel != "" {
+		return p.DefaultModel
+	}
+	if len(p.Models) > 0 {
+		return p.Models[0].ID
+	}
+	return ""
 }
 
 // DefaultKeyPrefix is the fixed prefix of every virtual key. Generated keys

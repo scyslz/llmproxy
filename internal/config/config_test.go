@@ -197,3 +197,42 @@ func TestGenerateKeyHasFixedPrefix(t *testing.T) {
 		t.Fatalf("generated key %q missing fixed prefix", k)
 	}
 }
+
+func TestNewLoadsModelMetadata(t *testing.T) {
+	dir := writeConfig(t, `{
+		"listen": ":3000",
+		"providers": [{
+			"id": "p", "name": "P", "baseUrl": "http://p",
+			"models": [
+				{"id": "m1", "contextLength": 128000, "maxOutputTokens": 16384},
+				{"id": "m1", "contextLength": 1},
+				{"id": " m2 ", "protocol": "responses"},
+				{"id": "m3", "protocol": "bogus"}
+			]
+		}]
+	}`)
+	m, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	models := m.Get().Providers[0].Models
+	if len(models) != 3 {
+		t.Fatalf("models = %+v, want 3", models)
+	}
+	if models[0].ID != "m1" || models[0].ContextLength != 128000 || models[0].MaxOutputTokens != 16384 {
+		t.Fatalf("first model = %+v", models[0])
+	}
+	if models[1].ID != "m2" || models[1].Protocol != "responses" {
+		t.Fatalf("second model = %+v", models[1])
+	}
+	if models[2].Protocol != "" {
+		t.Fatalf("invalid protocol was kept: %+v", models[2])
+	}
+}
+
+func TestNewRejectsLegacyStringModelList(t *testing.T) {
+	dir := writeConfig(t, `{"listen":":3000","providers":[{"id":"p","name":"P","baseUrl":"http://p","models":["m1"]}]}`)
+	if _, err := New(dir); err == nil {
+		t.Fatal("expected error for legacy string model list")
+	}
+}

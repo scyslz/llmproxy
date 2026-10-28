@@ -33,7 +33,7 @@ func TestHandleProxyNon2xxLogsHeaders(t *testing.T) {
 		EnableVirtualKey: true,
 		LogDetail:        "error",
 		Providers: []domain.Provider{
-			{ID: "solo", Name: "Solo P", BaseURL: failSrv.URL, APIKey: "k", Enabled: true, Models: []string{"m"}, DefaultModel: "m", Timeout: 2000},
+			{ID: "solo", Name: "Solo P", BaseURL: failSrv.URL, APIKey: "k", Enabled: true, Models: domain.Models("m"), DefaultModel: "m", Timeout: 2000},
 		},
 		Keys: []domain.VirtualKey{
 			{Key: "sk-solo", Name: "Solo Key", ProviderIDs: []string{"solo"}},
@@ -110,7 +110,7 @@ func TestHandleDirectChatLogsRequest(t *testing.T) {
 		Listen:    ":0",
 		LogDetail: "basic",
 		Providers: []domain.Provider{
-			{ID: "ok", Name: "Ok P", BaseURL: okSrv.URL, APIKey: "k", Enabled: true, Models: []string{"m"}, DefaultModel: "m", Timeout: 2000},
+			{ID: "ok", Name: "Ok P", BaseURL: okSrv.URL, APIKey: "k", Enabled: true, Models: domain.Models("m"), DefaultModel: "m", Timeout: 2000},
 		},
 	}
 	if err := cm.Replace(cfg); err != nil {
@@ -185,7 +185,7 @@ func TestHandleDirectChatNon2xxLogsHeaders(t *testing.T) {
 		Listen:    ":0",
 		LogDetail: "error",
 		Providers: []domain.Provider{
-			{ID: "bad", Name: "Bad P", BaseURL: failSrv.URL, APIKey: "k", Enabled: true, Models: []string{"m"}, DefaultModel: "m", Timeout: 2000},
+			{ID: "bad", Name: "Bad P", BaseURL: failSrv.URL, APIKey: "k", Enabled: true, Models: domain.Models("m"), DefaultModel: "m", Timeout: 2000},
 		},
 	}
 	if err := cm.Replace(cfg); err != nil {
@@ -270,7 +270,7 @@ func TestHandleDirectResponsesLogsRequest(t *testing.T) {
 		Listen:    ":0",
 		LogDetail: "basic",
 		Providers: []domain.Provider{
-			{ID: "ok", Name: "Ok P", BaseURL: okSrv.URL, APIKey: "k", Enabled: true, Models: []string{"m"}, DefaultModel: "m", Timeout: 2000},
+			{ID: "ok", Name: "Ok P", BaseURL: okSrv.URL, APIKey: "k", Enabled: true, Models: domain.Models("m"), DefaultModel: "m", Timeout: 2000},
 		},
 	}
 	if err := cm.Replace(cfg); err != nil {

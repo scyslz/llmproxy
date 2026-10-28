@@ -89,7 +89,7 @@ export default function Playground({ virtualKeys, providers, activeProviderName,
       // Direct upstream test mode: models come from the provider config
       if (selectedProviderId) {
         const provider = providers.find((p) => p.id === selectedProviderId);
-        const modelList = provider?.models || [];
+        const modelList = (provider?.models || []).map((m) => m.id);
         setModels(modelList);
         if (modelList.length > 0) {
           if (!modelList.includes(selectedModel)) {

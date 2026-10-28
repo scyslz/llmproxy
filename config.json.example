@@ -16,7 +16,10 @@
       "baseUrl": "https://api.example.com/v1",
       "apiKey": "your-api-key",
       "enabled": true,
-      "models": ["model-1", "model-2"],
+      "models": [
+        {"id": "model-1", "contextLength": 128000, "maxOutputTokens": 16384},
+        {"id": "model-2"}
+      ],
       "defaultModel": "model-1",
       "concurrency": 0,
       "timeout": 120000
